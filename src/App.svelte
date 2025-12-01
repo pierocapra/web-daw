@@ -4,6 +4,7 @@
   import { Track } from './lib/track.js';
   import TrackComponent from './components/Track.svelte';
   import Timeline from './components/Timeline.svelte';
+  import Scene3D from './components/Scene3D.svelte';
 
   let tracks = [];
   let initialized = false;
@@ -11,6 +12,11 @@
   let isPlayingAll = false;
   let loadedTracksCount = 0;
   let timelineComponent;
+  let waveformData = [];
+  let currentTime = 0;
+  let maxDuration = 0;
+  let isPlaying3D = false;
+  let show3DView = true; // Toggle between 2D and 3D view
   const NUM_TRACKS = 4; // Start with 4 tracks, easily scalable
 
   onMount(async () => {
@@ -79,6 +85,14 @@
     if (anyPlaying !== isPlayingAll) {
       isPlayingAll = anyPlaying;
     }
+    isPlaying3D = anyPlaying;
+  }
+
+  function handleWaveformUpdate(event) {
+    waveformData = event.detail.waveformData || [];
+    currentTime = event.detail.currentTime || 0;
+    maxDuration = event.detail.maxDuration || 0;
+    isPlaying3D = event.detail.isPlaying || false;
   }
 
   async function playAll() {
@@ -218,15 +232,39 @@
       <div class="loading">Initializing audio engine...</div>
     {:else}
       <div class="daw-workspace">
-        <div class="timeline-wrapper">
+        <div class="view-toggle-container">
+          <button
+            class="view-toggle"
+            on:click={() => (show3DView = !show3DView)}
+          >
+            {show3DView ? 'Switch to 2D View' : 'Switch to 3D View'}
+          </button>
+        </div>
+
+        {#if show3DView}
+          <div class="scene-3d-wrapper">
+            <Scene3D
+              {tracks}
+              {waveformData}
+              {currentTime}
+              {maxDuration}
+              isPlaying={isPlaying3D}
+            />
+          </div>
+        {/if}
+
+        <!-- Keep timeline mounted but hidden to generate waveform data -->
+        <div class="timeline-wrapper" class:hidden={show3DView}>
           <Timeline
             {tracks}
             key={timelineKey}
             bind:this={timelineComponent}
             on:fileLoaded={handleTimelineFileLoaded}
+            on:waveformUpdate={handleWaveformUpdate}
           />
         </div>
-        <div class="tracks-container">
+
+        <div class="tracks-container" class:hidden={show3DView}>
           {#each tracks as track, index}
             <TrackComponent
               {track}
@@ -427,5 +465,43 @@
     overflow-x: auto;
     overflow-y: hidden;
     align-items: stretch;
+  }
+
+  .view-toggle-container {
+    padding: 12px 20px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #2d2d2d;
+  }
+
+  .view-toggle {
+    background: #4a9eff;
+    border: none;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.15s;
+  }
+
+  .view-toggle:hover {
+    background: #5aaeff;
+    transform: scale(1.05);
+  }
+
+  .scene-3d-wrapper {
+    flex: 1;
+    width: 100%;
+    height: calc(100vh - 200px);
+    min-height: 600px;
+    position: relative;
+    background: #0a0a0a;
+  }
+
+  .hidden {
+    display: none;
   }
 </style>

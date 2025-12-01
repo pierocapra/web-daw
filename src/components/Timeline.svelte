@@ -355,6 +355,14 @@
       isPlaying = true;
       drawTimeline();
 
+      // Dispatch update for 3D scene
+      dispatch('waveformUpdate', {
+        waveformData,
+        currentTime,
+        maxDuration,
+        isPlaying,
+      });
+
       // Continue animation loop
       animationFrameId = requestAnimationFrame(updateTimeline);
     } else {
@@ -367,6 +375,14 @@
         currentTime = trackWithAudio.getCurrentTime();
       }
       drawTimeline();
+
+      // Dispatch update for 3D scene
+      dispatch('waveformUpdate', {
+        waveformData,
+        currentTime,
+        maxDuration,
+        isPlaying,
+      });
     }
   }
 
@@ -379,8 +395,11 @@
     }
   }
 
-  // Expose forceUpdate function
+  // Expose forceUpdate function and waveform data
   export { forceUpdate };
+
+  // Expose waveform data and playback state for 3D visualization
+  export { waveformData, currentTime, maxDuration, isPlaying };
 
   // Create a string representation of tracks with audio to detect changes
   $: tracksAudioSignature = tracks
@@ -415,6 +434,14 @@
     );
 
     generateWaveforms();
+
+    // Dispatch waveform update event for 3D scene
+    dispatch('waveformUpdate', {
+      waveformData,
+      currentTime,
+      maxDuration,
+      isPlaying,
+    });
 
     if (timelineCanvas) {
       // Use multiple strategies to ensure drawing happens
