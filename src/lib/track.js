@@ -16,7 +16,7 @@ export class Track {
     // Create audio nodes
     this.gainNode = audioContext.createGain();
     this.volumeNode = audioContext.createGain();
-    
+
     // 3-band EQ nodes
     this.lowFilter = audioContext.createBiquadFilter();
     this.midFilter = audioContext.createBiquadFilter();
@@ -67,15 +67,24 @@ export class Track {
       this.audioContext.resume();
     }
 
-    // Stop existing source if playing
-    this.stop();
+    // Stop existing source if playing, but preserve offset
+    if (this.source) {
+      try {
+        this.source.stop();
+      } catch (e) {
+        // Source may already be stopped
+      }
+      this.source.disconnect();
+      this.source = null;
+    }
+    this.isPlaying = false;
 
     // Create new source
     this.source = this.audioContext.createBufferSource();
     this.source.buffer = this.audioBuffer;
     this.source.connect(this.gainNode);
 
-    // Calculate offset for resume
+    // Calculate start time based on current offset (preserved from pause)
     const currentTime = this.audioContext.currentTime;
     this.startTime = currentTime - this.offset;
     this.source.start(0, this.offset);
@@ -86,8 +95,21 @@ export class Track {
   pause() {
     if (!this.isPlaying || !this.source) return;
 
+    // Save current position before stopping
     this.offset = this.audioContext.currentTime - this.startTime;
-    this.stop();
+
+    // Stop the source but keep the offset
+    if (this.source) {
+      try {
+        this.source.stop();
+      } catch (e) {
+        // Source may already be stopped
+      }
+      this.source.disconnect();
+      this.source = null;
+    }
+    this.isPlaying = false;
+    // Don't reset offset or startTime - keep them for resume
   }
 
   stop() {
@@ -156,5 +178,50 @@ export class Track {
     if (!this.isPlaying) return this.offset;
     return this.audioContext.currentTime - this.startTime;
   }
-}
 
+  seek(time) {
+    // Seek to a specific time position
+    const wasPlaying = this.isPlaying;
+    const duration = this.getDuration();
+
+    // Clamp time to valid range
+    const clampedTime = Math.max(0, Math.min(time, duration));
+
+    // Stop current source if playing
+    if (this.source) {
+      try {
+        this.source.stop();
+      } catch (e) {
+        // Source may already be stopped
+      }
+      this.source.disconnect();
+      this.source = null;
+    }
+
+    // Update offset to the new position
+    this.offset = clampedTime;
+    this.isPlaying = false;
+
+    // If it was playing, resume from new position
+    if (wasPlaying && this.audioBuffer) {
+      this.play();
+    }
+  }
+
+  fastForward(seconds = 5) {
+    if (!this.audioBuffer) return;
+
+    const currentTime = this.getCurrentTime();
+    const duration = this.getDuration();
+    const newTime = Math.min(currentTime + seconds, duration);
+    this.seek(newTime);
+  }
+
+  rewind(seconds = 5) {
+    if (!this.audioBuffer) return;
+
+    const currentTime = this.getCurrentTime();
+    const newTime = Math.max(currentTime - seconds, 0);
+    this.seek(newTime);
+  }
+}

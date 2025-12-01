@@ -10,6 +10,7 @@
   let masterVolume = 1.0;
   let isPlayingAll = false;
   let loadedTracksCount = 0;
+  let timelineComponent;
   const NUM_TRACKS = 4; // Start with 4 tracks, easily scalable
 
   onMount(async () => {
@@ -68,30 +69,69 @@
     }
   }
 
-  async function togglePlayAll() {
+  async function playAll() {
     if (!hasAnyAudioLoaded) return;
-
-    // Ensure audio context is resumed
     await audioContextManager.resume();
 
-    if (isPlayingAll) {
-      // Pause all tracks
-      tracks.forEach((track) => {
-        if (track.isPlaying) {
-          track.pause();
-        }
-      });
-      isPlayingAll = false;
-    } else {
-      // Play all tracks that have audio loaded
-      tracks.forEach((track) => {
-        if (track.audioBuffer && !track.isPlaying) {
-          track.play();
-        }
-      });
-      // Update state after a brief delay to allow tracks to start
+    tracks.forEach((track) => {
+      if (track.audioBuffer && !track.isPlaying) {
+        track.play();
+      }
+    });
+
+    setTimeout(() => {
+      isPlayingAll = tracks.some((track) => track.isPlaying);
+    }, 10);
+  }
+
+  function pauseAll() {
+    tracks.forEach((track) => {
+      if (track.isPlaying) {
+        track.pause();
+      }
+    });
+    isPlayingAll = false;
+  }
+
+  function stopAll() {
+    tracks.forEach((track) => {
+      if (track.audioBuffer) {
+        track.stop();
+      }
+    });
+    isPlayingAll = false;
+    // Force timeline update to show position 0
+    if (timelineComponent) {
       setTimeout(() => {
-        isPlayingAll = tracks.some((track) => track.isPlaying);
+        timelineComponent.forceUpdate();
+      }, 10);
+    }
+  }
+
+  function fastForwardAll(seconds = 5) {
+    tracks.forEach((track) => {
+      if (track.audioBuffer) {
+        track.fastForward(seconds);
+      }
+    });
+    // Force timeline update to show new position
+    if (timelineComponent) {
+      setTimeout(() => {
+        timelineComponent.forceUpdate();
+      }, 10);
+    }
+  }
+
+  function rewindAll(seconds = 5) {
+    tracks.forEach((track) => {
+      if (track.audioBuffer) {
+        track.rewind(seconds);
+      }
+    });
+    // Force timeline update to show new position
+    if (timelineComponent) {
+      setTimeout(() => {
+        timelineComponent.forceUpdate();
       }, 10);
     }
   }
@@ -101,14 +141,48 @@
   <header class="daw-header">
     <h1>Web DAW</h1>
     <div class="master-controls">
-      <button
-        class="play-all-button"
-        on:click={togglePlayAll}
-        disabled={!hasAnyAudioLoaded}
-        aria-label={isPlayingAll ? 'Pause All' : 'Play All'}
-      >
-        {isPlayingAll ? '⏸' : '▶'} All
-      </button>
+      <div class="transport-controls">
+        <button
+          class="transport-button play-button"
+          on:click={playAll}
+          disabled={!hasAnyAudioLoaded}
+          aria-label="Play"
+        >
+          ▶
+        </button>
+        <button
+          class="transport-button pause-button"
+          on:click={pauseAll}
+          disabled={!hasAnyAudioLoaded || !isPlayingAll}
+          aria-label="Pause"
+        >
+          ⏸
+        </button>
+        <button
+          class="transport-button stop-button"
+          on:click={stopAll}
+          disabled={!hasAnyAudioLoaded}
+          aria-label="Stop"
+        >
+          ⏹
+        </button>
+        <button
+          class="transport-button rewind-button"
+          on:click={() => rewindAll(5)}
+          disabled={!hasAnyAudioLoaded}
+          aria-label="Rewind 5 seconds"
+        >
+          ⏪
+        </button>
+        <button
+          class="transport-button forward-button"
+          on:click={() => fastForwardAll(5)}
+          disabled={!hasAnyAudioLoaded}
+          aria-label="Fast forward 5 seconds"
+        >
+          ⏩
+        </button>
+      </div>
       <div class="master-volume-control">
         <label>Master Volume</label>
         <div class="master-slider-container">
@@ -133,7 +207,7 @@
     {:else}
       <div class="daw-workspace">
         <div class="timeline-wrapper">
-          <Timeline {tracks} key={timelineKey} />
+          <Timeline {tracks} key={timelineKey} bind:this={timelineComponent} />
         </div>
         <div class="tracks-container">
           {#each tracks as track, index}
@@ -174,32 +248,79 @@
   .master-controls {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 30px;
   }
 
-  .play-all-button {
-    background: #4a9eff;
-    border: none;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 6px;
-    font-size: 16px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
+  .transport-controls {
     display: flex;
     align-items: center;
     gap: 8px;
+    background: #1a1a1a;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid #333;
   }
 
-  .play-all-button:hover:not(:disabled) {
-    background: #5aaeff;
+  .transport-button {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    color: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
-  .play-all-button:disabled {
-    background: #444;
+  .transport-button:hover:not(:disabled) {
+    background: #3a3a3a;
+    border-color: #4a4a4a;
+    transform: scale(1.05);
+  }
+
+  .transport-button:active:not(:disabled) {
+    transform: scale(0.95);
+  }
+
+  .transport-button:disabled {
+    background: #1a1a1a;
+    border-color: #2a2a2a;
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.4;
+  }
+
+  .play-button {
+    background: #4a9eff;
+    border-color: #4a9eff;
+  }
+
+  .play-button:hover:not(:disabled) {
+    background: #5aaeff;
+    border-color: #5aaeff;
+  }
+
+  .pause-button {
+    background: #f39c12;
+    border-color: #f39c12;
+  }
+
+  .pause-button:hover:not(:disabled) {
+    background: #e67e22;
+    border-color: #e67e22;
+  }
+
+  .stop-button {
+    background: #e74c3c;
+    border-color: #e74c3c;
+  }
+
+  .stop-button:hover:not(:disabled) {
+    background: #c0392b;
+    border-color: #c0392b;
   }
 
   .master-volume-control {
@@ -282,7 +403,12 @@
 
   .tracks-container {
     flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    padding: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    align-items: stretch;
   }
 </style>

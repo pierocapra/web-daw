@@ -261,8 +261,9 @@
       return;
     }
 
-    // Get current time from first playing track
+    // Get current time from first playing track, or first track with audio
     let playingTrack = tracks.find((track) => track && track.isPlaying);
+    let trackWithAudio = tracks.find((track) => track && track.audioBuffer);
 
     if (playingTrack) {
       currentTime = playingTrack.getCurrentTime();
@@ -277,13 +278,24 @@
       animationFrameId = null;
 
       // Update to show current paused position
-      const trackWithAudio = tracks.find((track) => track && track.audioBuffer);
       if (trackWithAudio) {
         currentTime = trackWithAudio.getCurrentTime();
       }
       drawTimeline();
     }
   }
+
+  // Force update timeline (useful for seeking when paused)
+  function forceUpdate() {
+    const trackWithAudio = tracks.find((track) => track && track.audioBuffer);
+    if (trackWithAudio) {
+      currentTime = trackWithAudio.getCurrentTime();
+      drawTimeline();
+    }
+  }
+
+  // Expose forceUpdate function
+  export { forceUpdate };
 
   // Create a string representation of tracks with audio to detect changes
   $: tracksAudioSignature = tracks

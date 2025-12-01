@@ -1,6 +1,6 @@
 <script>
-  import { audioContextManager } from '../lib/audioContext.js';
   import { createEventDispatcher } from 'svelte';
+  import Knob from './Knob.svelte';
 
   export let track = null;
   export let trackNumber = 1;
@@ -8,7 +8,6 @@
   const dispatch = createEventDispatcher();
 
   let fileName = 'No file loaded';
-  let isPlaying = false;
   let volume = 1.0;
   let gain = 1.0;
   let lowEQ = 0;
@@ -22,7 +21,6 @@
     lowEQ = track.getLowEQ();
     midEQ = track.getMidEQ();
     highEQ = track.getHighEQ();
-    isPlaying = track.isPlaying;
     hasAudioBuffer = !!track.audioBuffer;
   }
 
@@ -39,21 +37,6 @@
     }
   }
 
-  async function togglePlayback() {
-    if (!track || !track.audioBuffer) return;
-
-    // Ensure audio context is resumed (required for user interaction)
-    await audioContextManager.resume();
-
-    if (isPlaying) {
-      track.pause();
-    } else {
-      track.play();
-    }
-    // Update state from track
-    isPlaying = track.isPlaying;
-  }
-
   function handleVolumeChange(event) {
     const value = parseFloat(event.target.value);
     if (track) {
@@ -62,36 +45,46 @@
     }
   }
 
-  function handleGainChange(event) {
-    const value = parseFloat(event.target.value);
+  // Knob value change handlers
+  function handleGainChange() {
     if (track) {
-      track.setGain(value);
-      gain = value;
+      track.setGain(gain);
     }
   }
 
-  function handleLowEQChange(event) {
-    const value = parseFloat(event.target.value);
+  function handleLowEQChange() {
     if (track) {
-      track.setLowEQ(value);
-      lowEQ = value;
+      track.setLowEQ(lowEQ);
     }
   }
 
-  function handleMidEQChange(event) {
-    const value = parseFloat(event.target.value);
+  function handleMidEQChange() {
     if (track) {
-      track.setMidEQ(value);
-      midEQ = value;
+      track.setMidEQ(midEQ);
     }
   }
 
-  function handleHighEQChange(event) {
-    const value = parseFloat(event.target.value);
+  function handleHighEQChange() {
     if (track) {
-      track.setHighEQ(value);
-      highEQ = value;
+      track.setHighEQ(highEQ);
     }
+  }
+
+  // Watch for knob value changes
+  $: if (track && gain !== undefined) {
+    handleGainChange();
+  }
+
+  $: if (track && lowEQ !== undefined) {
+    handleLowEQChange();
+  }
+
+  $: if (track && midEQ !== undefined) {
+    handleMidEQChange();
+  }
+
+  $: if (track && highEQ !== undefined) {
+    handleHighEQChange();
   }
 
   function formatDB(value) {
@@ -104,120 +97,104 @@
 </script>
 
 <div class="track">
-  <!-- Left Sidebar: Controls -->
-  <div class="track-sidebar">
-    <div class="sidebar-header">
-      <div class="track-info">
-        <h3>Track {trackNumber}</h3>
-        <span class="file-name">{fileName}</span>
-      </div>
-      <button
-        class="play-button"
-        on:click={togglePlayback}
-        disabled={!hasAudioBuffer}
-        aria-label={isPlaying ? 'Pause' : 'Play'}
-      >
-        {isPlaying ? '⏸' : '▶'}
-      </button>
+  <div class="track-header">
+    <div class="track-info">
+      <h3>Track {trackNumber}</h3>
+      <span class="file-name">{fileName}</span>
+    </div>
+  </div>
+
+  <div class="track-controls">
+    <!-- Gain Knob -->
+    <div class="control-knob">
+      <Knob
+        bind:value={gain}
+        min={0}
+        max={2}
+        step={0.01}
+        label="Gain"
+        unit=""
+        size={70}
+        on:change={(e) => {
+          gain = e.detail;
+          handleGainChange();
+        }}
+      />
     </div>
 
-    <div class="sidebar-controls">
-      <div class="control-group">
-        <label for="volume-{trackNumber}">Volume</label>
-        <div class="slider-container">
-          <input
-            id="volume-{trackNumber}"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            on:input={handleVolumeChange}
-            class="slider"
-          />
-          <span class="value">{formatPercent(volume)}%</span>
-        </div>
-      </div>
+    <!-- EQ Knobs -->
+    <div class="eq-knobs">
+      <Knob
+        bind:value={lowEQ}
+        min={-12}
+        max={12}
+        step={0.1}
+        label="Low"
+        unit="dB"
+        size={60}
+        on:change={(e) => {
+          lowEQ = e.detail;
+          handleLowEQChange();
+        }}
+      />
+      <Knob
+        bind:value={midEQ}
+        min={-12}
+        max={12}
+        step={0.1}
+        label="Mid"
+        unit="dB"
+        size={60}
+        on:change={(e) => {
+          midEQ = e.detail;
+          handleMidEQChange();
+        }}
+      />
+      <Knob
+        bind:value={highEQ}
+        min={-12}
+        max={12}
+        step={0.1}
+        label="High"
+        unit="dB"
+        size={60}
+        on:change={(e) => {
+          highEQ = e.detail;
+          handleHighEQChange();
+        }}
+      />
+    </div>
 
-      <div class="control-group">
-        <label for="gain-{trackNumber}">Gain</label>
-        <div class="slider-container">
-          <input
-            id="gain-{trackNumber}"
-            type="range"
-            min="0"
-            max="2"
-            step="0.01"
-            value={gain}
-            on:input={handleGainChange}
-            class="slider"
-          />
-          <span class="value">{formatPercent(gain / 2)}%</span>
-        </div>
-      </div>
+    <!-- File Upload -->
+    <div class="file-upload">
+      <label for="file-input-{trackNumber}" class="file-label">
+        Load Audio
+      </label>
+      <input
+        id="file-input-{trackNumber}"
+        type="file"
+        accept="audio/*"
+        on:change={handleFileSelect}
+        class="file-input"
+      />
+    </div>
+  </div>
 
-      <div class="eq-section">
-        <h4>3-Band EQ</h4>
-        <div class="eq-controls">
-          <div class="eq-band">
-            <label for="low-eq-{trackNumber}">Low</label>
-            <input
-              id="low-eq-{trackNumber}"
-              type="range"
-              min="-12"
-              max="12"
-              step="0.1"
-              value={lowEQ}
-              on:input={handleLowEQChange}
-              class="eq-slider"
-            />
-            <span class="eq-value">{formatDB(lowEQ)}dB</span>
-          </div>
-
-          <div class="eq-band">
-            <label for="mid-eq-{trackNumber}">Mid</label>
-            <input
-              id="mid-eq-{trackNumber}"
-              type="range"
-              min="-12"
-              max="12"
-              step="0.1"
-              value={midEQ}
-              on:input={handleMidEQChange}
-              class="eq-slider"
-            />
-            <span class="eq-value">{formatDB(midEQ)}dB</span>
-          </div>
-
-          <div class="eq-band">
-            <label for="high-eq-{trackNumber}">High</label>
-            <input
-              id="high-eq-{trackNumber}"
-              type="range"
-              min="-12"
-              max="12"
-              step="0.1"
-              value={highEQ}
-              on:input={handleHighEQChange}
-              class="eq-slider"
-            />
-            <span class="eq-value">{formatDB(highEQ)}dB</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="file-upload">
-        <label for="file-input-{trackNumber}" class="file-label">
-          Load Audio
-        </label>
-        <input
-          id="file-input-{trackNumber}"
-          type="file"
-          accept="audio/*"
-          on:change={handleFileSelect}
-          class="file-input"
-        />
-      </div>
+  <!-- Volume at bottom -->
+  <div class="volume-control">
+    <label for="volume-{trackNumber}">Volume</label>
+    <div class="volume-slider-container">
+      <input
+        id="volume-{trackNumber}"
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        value={volume}
+        on:input={handleVolumeChange}
+        class="volume-slider"
+      />
+      <span class="volume-value">{formatPercent(volume)}%</span>
     </div>
   </div>
 </div>
@@ -225,25 +202,16 @@
 <style>
   .track {
     display: flex;
+    flex-direction: column;
     background: #1e1e1e;
     border-radius: 4px;
-    margin-bottom: 2px;
     border: 1px solid #2d2d2d;
-    min-height: 120px;
+    min-width: 200px;
+    width: 100%;
     overflow: hidden;
   }
 
-  /* Left Sidebar */
-  .track-sidebar {
-    width: 280px;
-    min-width: 280px;
-    background: #252525;
-    border-right: 1px solid #2d2d2d;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .sidebar-header {
+  .track-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -269,200 +237,32 @@
     max-width: 180px;
   }
 
-  .play-button {
-    background: #4a9eff;
-    border: none;
-    color: white;
-    width: 36px;
-    height: 36px;
-    border-radius: 4px;
-    font-size: 16px;
-    cursor: pointer;
-    transition: background 0.15s;
-    flex-shrink: 0;
+  .track-controls {
+    padding: 16px;
     display: flex;
+    flex-direction: column;
     align-items: center;
+    gap: 20px;
+    flex: 1;
+  }
+
+  .control-knob {
+    display: flex;
     justify-content: center;
   }
 
-  .play-button:hover:not(:disabled) {
-    background: #5aaeff;
-  }
-
-  .play-button:disabled {
-    background: #333;
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-
-  .sidebar-controls {
-    padding: 12px 16px;
+  .eq-knobs {
     display: flex;
-    flex-direction: column;
     gap: 16px;
-    overflow-y: auto;
-    flex: 1;
-  }
-
-  .control-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .control-group label {
-    font-size: 11px;
-    font-weight: 500;
-    color: #aaa;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .slider-container {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .slider {
-    flex: 1;
-    height: 4px;
-    background: #333;
-    border-radius: 2px;
-    outline: none;
-    -webkit-appearance: none;
-  }
-
-  .slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    background: #4a9eff;
-    border-radius: 50%;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  .slider::-webkit-slider-thumb:hover {
-    background: #5aaeff;
-  }
-
-  .slider::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    background: #4a9eff;
-    border-radius: 50%;
-    cursor: pointer;
-    border: none;
-    transition: background 0.15s;
-  }
-
-  .slider::-moz-range-thumb:hover {
-    background: #5aaeff;
-  }
-
-  .value {
-    min-width: 45px;
-    text-align: right;
-    font-size: 11px;
-    color: #888;
-    font-family: 'Courier New', monospace;
-  }
-
-  .eq-section {
-    background: #1a1a1a;
-    padding: 12px;
-    border-radius: 4px;
-    border: 1px solid #2d2d2d;
-    overflow: hidden;
-  }
-
-  .eq-section h4 {
-    font-size: 10px;
-    margin: 0 0 12px 0;
-    color: #aaa;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-weight: 600;
-  }
-
-  .eq-controls {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-  }
-
-  .eq-band {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    overflow: hidden;
-    min-width: 0;
-  }
-
-  .eq-band label {
-    font-size: 10px;
-    color: #888;
-    text-align: center;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .eq-slider {
-    width: 80px;
-    height: 4px;
-    transform: rotate(-90deg);
-    background: #333;
-    border-radius: 2px;
-    outline: none;
-    -webkit-appearance: none;
-    margin: 30px 0;
-  }
-
-  .eq-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    background: #4a9eff;
-    border-radius: 50%;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  .eq-slider::-webkit-slider-thumb:hover {
-    background: #5aaeff;
-  }
-
-  .eq-slider::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    background: #4a9eff;
-    border-radius: 50%;
-    cursor: pointer;
-    border: none;
-    transition: background 0.15s;
-  }
-
-  .eq-slider::-moz-range-thumb:hover {
-    background: #5aaeff;
-  }
-
-  .eq-value {
-    font-size: 10px;
-    color: #888;
-    text-align: center;
-    font-family: 'Courier New', monospace;
+    justify-content: center;
   }
 
   .file-upload {
-    margin-top: 4px;
+    width: 100%;
   }
 
   .file-label {
-    display: inline-block;
+    display: block;
     padding: 8px 16px;
     background: #333;
     color: #ccc;
@@ -472,7 +272,6 @@
     transition: background 0.15s;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    width: 100%;
     text-align: center;
     border: 1px solid #3a3a3a;
   }
@@ -484,5 +283,74 @@
 
   .file-input {
     display: none;
+  }
+
+  .volume-control {
+    padding: 12px 16px;
+    border-top: 1px solid #2d2d2d;
+    background: #1a1a1a;
+  }
+
+  .volume-control label {
+    display: block;
+    font-size: 10px;
+    font-weight: 500;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .volume-slider-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .volume-slider {
+    flex: 1;
+    height: 4px;
+    background: #333;
+    border-radius: 2px;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: #4a9eff;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .volume-slider::-webkit-slider-thumb:hover {
+    background: #5aaeff;
+  }
+
+  .volume-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: #4a9eff;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+    transition: background 0.15s;
+  }
+
+  .volume-slider::-moz-range-thumb:hover {
+    background: #5aaeff;
+  }
+
+  .volume-value {
+    min-width: 45px;
+    text-align: right;
+    font-size: 11px;
+    color: #888;
+    font-family: 'Courier New', monospace;
   }
 </style>
