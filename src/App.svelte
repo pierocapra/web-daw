@@ -280,9 +280,10 @@
 
 <style>
   .daw-container {
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
 
   .daw-header {
@@ -495,10 +496,11 @@
   .scene-3d-wrapper {
     flex: 1;
     width: 100%;
-    height: calc(100vh - 200px);
-    min-height: 600px;
+    min-height: 400px;
     position: relative;
     background: #0a0a0a;
+    overflow: hidden;
+    display: flex;
   }
 
   .hidden {

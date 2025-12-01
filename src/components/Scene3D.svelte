@@ -270,6 +270,11 @@
   // Track mute/solo state for reactivity
   let trackMuteSolo = {};
 
+  // Analyser nodes for real-time frequency visualization
+  let trackAnalysers = {};
+  let frequencyData = {};
+  let eqAnimationFrameId = null;
+
   // Auto-focus action for input
   function autoFocus(node) {
     node.focus();
@@ -317,11 +322,34 @@
           trackMuteSolo[index].muted = track.getMute();
           trackMuteSolo[index].soloed = track.getSolo();
         }
+
+        // Create analyser node for real-time frequency visualization
+        if (!trackAnalysers[index] && track.audioContext && track.highFilter) {
+          try {
+            const analyser = track.audioContext.createAnalyser();
+            analyser.fftSize = 2048;
+            analyser.smoothingTimeConstant = 0.3; // Less smoothing for more responsive visualization
+
+            // Connect analyser to tap the signal after EQ processing (before volume)
+            // Connect to highFilter output (after all EQ processing)
+            track.highFilter.connect(analyser);
+
+            trackAnalysers[index] = analyser;
+            frequencyData[index] = new Uint8Array(analyser.frequencyBinCount);
+          } catch (error) {
+            console.warn('Failed to create analyser for track', index, error);
+          }
+        }
       }
     });
     cardPositions = { ...cardPositions }; // Trigger reactivity
     trackNames = { ...trackNames }; // Trigger reactivity
     trackMuteSolo = { ...trackMuteSolo }; // Trigger reactivity
+
+    // Start animation loop for real-time visualization
+    if (eqAnimationFrameId === null) {
+      animateEQVisualization();
+    }
   }
 
   function startEditingName(trackIndex, event) {
@@ -391,6 +419,51 @@
 
   function handleCardMouseUp() {
     draggedCard = null;
+  }
+
+  // Update solo states for all tracks
+  function updateSoloStates() {
+    if (!tracks || tracks.length === 0) return;
+
+    const anySoloed = tracks.some((t) => t && t.isSoloed);
+
+    tracks.forEach((track) => {
+      if (!track) return;
+
+      if (anySoloed) {
+        // If any track is soloed
+        if (track.isSoloed) {
+          // Soloed tracks: apply user volume if not manually muted
+          if (!track.isMuted) {
+            track.volumeNode.gain.value = track.userVolume;
+          } else {
+            // Manually muted tracks stay muted
+            track.volumeNode.gain.value = 0;
+          }
+        } else {
+          // Non-soloed tracks: mute them (unless they were manually muted, then keep them muted)
+          if (!track.isMuted) {
+            // Store user volume before muting due to solo (if not already stored)
+            if (track.volumeNode.gain.value > 0) {
+              track.preMuteVolume = track.userVolume;
+            }
+            track.volumeNode.gain.value = 0;
+          } else {
+            // Manually muted tracks stay muted
+            track.volumeNode.gain.value = 0;
+          }
+        }
+      } else {
+        // No solo active: restore user volumes for tracks that were muted by solo only
+        if (!track.isMuted) {
+          // Restore user volume if it was muted by solo
+          track.volumeNode.gain.value = track.userVolume;
+        } else {
+          // Manually muted tracks stay muted
+          track.volumeNode.gain.value = 0;
+        }
+      }
+    });
   }
 
   // Initialize track state
@@ -509,6 +582,80 @@
 
     ctx.stroke();
 
+    // Draw real-time frequency spectrum if analyser is available
+    // Only show spectrum if track is playing and not muted, and solo logic allows it
+    const analyser = trackAnalysers[trackIndex];
+    const freqData = frequencyData[trackIndex];
+
+    // Check if track should display spectrum based on mute/solo state
+    const anySoloed = tracks.some((t) => t && t.isSoloed);
+    const shouldShowSpectrum =
+      track.isPlaying && !track.isMuted && (!anySoloed || track.isSoloed);
+
+    if (analyser && freqData && shouldShowSpectrum) {
+      analyser.getByteFrequencyData(freqData);
+
+      // Draw frequency spectrum as a filled area
+      const sampleRate = analyser.context.sampleRate;
+      const nyquist = sampleRate / 2;
+      const binCount = freqData.length;
+
+      ctx.fillStyle = getTrackColor(trackIndex);
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+
+      // Create a smooth spectrum visualization
+      for (let x = 0; x < width; x++) {
+        // Map canvas X position to frequency (logarithmic)
+        const freq = minFreq * Math.pow(maxFreq / minFreq, x / width);
+
+        // Map frequency to FFT bin index
+        const binIndex = Math.floor((freq / nyquist) * binCount);
+        const bin = Math.min(binCount - 1, Math.max(0, binIndex));
+
+        // Get frequency data value
+        const dataValue = freqData[bin];
+        const normalizedValue = dataValue / 255; // 0-1
+
+        // More sensitive visualization - amplify lower signals
+        // Apply gain boost for better visibility of quieter frequencies
+        const amplifiedValue = Math.pow(normalizedValue, 0.5); // Square root for more sensitivity
+
+        // Convert to dB scale for visualization (more musical)
+        // Use a wider dB range for more sensitivity (-80dB to 0dB instead of -60dB to 0dB)
+        const dbValue =
+          amplifiedValue > 0 ? 20 * Math.log10(amplifiedValue + 0.001) : -80;
+        const normalizedDb = Math.max(0, Math.min(1, (dbValue + 80) / 80)); // -80dB to 0dB mapped to 0-1
+
+        // Apply additional sensitivity boost
+        const sensitivityBoost = Math.pow(normalizedDb, 0.7); // Make it even more sensitive
+
+        // Draw from bottom, scaled to fit in the display area
+        const barHeight = sensitivityBoost * (height - 20);
+        const y = height - barHeight - 10;
+
+        if (x === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+
+      // Close the path and fill
+      ctx.lineTo(width, height - 10);
+      ctx.lineTo(0, height - 10);
+      ctx.closePath();
+      ctx.fill();
+
+      // Draw outline
+      ctx.strokeStyle = getTrackColor(trackIndex);
+      ctx.globalAlpha = 0.8;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.globalAlpha = 1.0;
+    }
+
     // Draw frequency markers
     ctx.fillStyle = '#666';
     ctx.font = '9px monospace';
@@ -536,6 +683,31 @@
     const ctx = canvas.getContext('2d');
     ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
     drawEQ(canvas, track, trackIndex);
+  }
+
+  // Animation loop for real-time EQ visualization
+  function animateEQVisualization() {
+    if (eqAnimationFrameId !== null) {
+      cancelAnimationFrame(eqAnimationFrameId);
+    }
+
+    function update() {
+      // Update all EQ canvases
+      tracks.forEach((track, index) => {
+        if (track && trackStates[index]) {
+          const canvas = document.querySelector(
+            `canvas[data-track-index="${index}"]`
+          );
+          if (canvas) {
+            drawEQ(canvas, track, index);
+          }
+        }
+      });
+
+      eqAnimationFrameId = requestAnimationFrame(update);
+    }
+
+    update();
   }
 
   function createTimelineIndicator() {
@@ -932,12 +1104,28 @@
   // Re-initialize scene if container becomes visible
   $: if (container && !scene) {
     setTimeout(() => {
-      if (
-        container &&
-        container.clientWidth > 0 &&
-        container.clientHeight > 0
-      ) {
-        initScene();
+      if (container) {
+        console.log('Scene3D: Checking container dimensions', {
+          clientWidth: container.clientWidth,
+          clientHeight: container.clientHeight,
+          offsetWidth: container.offsetWidth,
+          offsetHeight: container.offsetHeight,
+          computedStyle: window.getComputedStyle(container).height,
+        });
+        if (container.clientWidth > 0 && container.clientHeight > 0) {
+          initScene();
+        } else {
+          // Retry if dimensions are still 0
+          setTimeout(() => {
+            if (
+              container &&
+              container.clientWidth > 0 &&
+              container.clientHeight > 0
+            ) {
+              initScene();
+            }
+          }, 200);
+        }
       }
     }, 100);
   }
@@ -979,6 +1167,12 @@
     window.removeEventListener('resize', handleResize);
     window.removeEventListener('mousemove', handleCardMouseMove);
     window.removeEventListener('mouseup', handleCardMouseUp);
+
+    // Cleanup animation loop
+    if (eqAnimationFrameId !== null) {
+      cancelAnimationFrame(eqAnimationFrameId);
+      eqAnimationFrameId = null;
+    }
   });
 </script>
 
@@ -1067,6 +1261,8 @@
                   }
                   trackMuteSolo[trackIndex].muted = newMuteState;
                   trackMuteSolo = { ...trackMuteSolo }; // Trigger reactivity
+                  // Update solo states if needed (solo logic may need to re-evaluate)
+                  updateSoloStates();
                 }}
                 title="Mute"
               >
@@ -1083,6 +1279,8 @@
                   }
                   trackMuteSolo[trackIndex].soloed = newSoloState;
                   trackMuteSolo = { ...trackMuteSolo }; // Trigger reactivity
+                  // Update solo states for all tracks
+                  updateSoloStates();
                 }}
                 title="Solo"
               >
@@ -1314,7 +1512,7 @@
   .scene-3d-container {
     width: 100%;
     height: 100%;
-    min-height: 600px;
+    flex: 1;
     position: relative;
     overflow: hidden;
     background: #0a0a0a;
