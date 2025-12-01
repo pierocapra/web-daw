@@ -197,6 +197,15 @@ export class Track {
     return this.lowFilter.gain.value;
   }
 
+  setLowFrequency(value) {
+    // Frequency: 20Hz to 500Hz for low shelf
+    this.lowFilter.frequency.value = Math.max(20, Math.min(500, value));
+  }
+
+  getLowFrequency() {
+    return this.lowFilter.frequency.value;
+  }
+
   setMidEQ(value) {
     this.midFilter.gain.value = value;
   }
@@ -205,12 +214,30 @@ export class Track {
     return this.midFilter.gain.value;
   }
 
+  setMidFrequency(value) {
+    // Frequency: 200Hz to 5000Hz for mid peaking
+    this.midFilter.frequency.value = Math.max(200, Math.min(5000, value));
+  }
+
+  getMidFrequency() {
+    return this.midFilter.frequency.value;
+  }
+
   setHighEQ(value) {
     this.highFilter.gain.value = value;
   }
 
   getHighEQ() {
     return this.highFilter.gain.value;
+  }
+
+  setHighFrequency(value) {
+    // Frequency: 1000Hz to 20000Hz for high shelf
+    this.highFilter.frequency.value = Math.max(1000, Math.min(20000, value));
+  }
+
+  getHighFrequency() {
+    return this.highFilter.frequency.value;
   }
 
   getDuration() {

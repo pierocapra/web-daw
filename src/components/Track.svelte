@@ -1,13 +1,19 @@
 <script>
+  import { onMount, onDestroy } from 'svelte';
   import Knob from './Knob.svelte';
 
   export let track = null;
   export let trackNumber = 1;
+
+  let eqCanvas;
   let volume = 1.0;
   let gain = 1.0;
   let lowEQ = 0;
   let midEQ = 0;
   let highEQ = 0;
+  let lowFreq = 250;
+  let midFreq = 1000;
+  let highFreq = 4000;
   let hasAudioBuffer = false;
 
   $: if (track) {
@@ -16,6 +22,9 @@
     lowEQ = track.getLowEQ();
     midEQ = track.getMidEQ();
     highEQ = track.getHighEQ();
+    lowFreq = track.getLowFrequency();
+    midFreq = track.getMidFrequency();
+    highFreq = track.getHighFrequency();
     hasAudioBuffer = !!track.audioBuffer;
   }
 
@@ -52,6 +61,37 @@
     }
   }
 
+  function handleLowFreqChange(event) {
+    const value = parseFloat(event.target.value);
+    if (track) {
+      track.setLowFrequency(value);
+      lowFreq = value;
+    }
+  }
+
+  function handleMidFreqChange(event) {
+    const value = parseFloat(event.target.value);
+    if (track) {
+      track.setMidFrequency(value);
+      midFreq = value;
+    }
+  }
+
+  function handleHighFreqChange(event) {
+    const value = parseFloat(event.target.value);
+    if (track) {
+      track.setHighFrequency(value);
+      highFreq = value;
+    }
+  }
+
+  function formatFrequency(freq) {
+    if (freq >= 1000) {
+      return `${(freq / 1000).toFixed(1)}k`;
+    }
+    return Math.round(freq).toString();
+  }
+
   // Watch for knob value changes
   $: if (track && gain !== undefined) {
     handleGainChange();
@@ -75,6 +115,130 @@
 
   function formatPercent(value) {
     return Math.round(value * 100);
+  }
+
+  function drawEQ() {
+    if (!eqCanvas || !track) return;
+
+    const canvas = eqCanvas;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height);
+
+    // Draw background
+    ctx.fillStyle = '#0f0f0f';
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw grid lines
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+
+    // Horizontal center line (0dB)
+    const centerY = height / 2;
+    ctx.beginPath();
+    ctx.moveTo(0, centerY);
+    ctx.lineTo(width, centerY);
+    ctx.stroke();
+
+    // Frequency range (logarithmic): 20Hz to 20kHz
+    const minFreq = 20;
+    const maxFreq = 20000;
+
+    // Draw frequency response curve
+    ctx.strokeStyle = '#4a9eff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+
+    const points = [];
+    for (let i = 0; i < width; i++) {
+      const freq = minFreq * Math.pow(maxFreq / minFreq, i / width);
+
+      // Calculate response for each filter
+      let response = 0;
+
+      // Low shelf response (simplified)
+      if (freq <= lowFreq) {
+        response += lowEQ;
+      } else if (freq <= lowFreq * 2) {
+        response += lowEQ * (1 - (freq - lowFreq) / lowFreq);
+      }
+
+      // Mid peaking response (simplified)
+      const midDist = Math.abs(Math.log2(freq / midFreq));
+      if (midDist < 1.5) {
+        const bell = Math.cos(((midDist / 1.5) * Math.PI) / 2);
+        response += midEQ * bell;
+      }
+
+      // High shelf response (simplified)
+      if (freq >= highFreq) {
+        response += highEQ;
+      } else if (freq >= highFreq / 2) {
+        response += highEQ * ((freq - highFreq / 2) / (highFreq / 2));
+      }
+
+      // Convert dB to linear and clamp
+      const linearGain = Math.pow(10, response / 20);
+      const clampedGain = Math.max(0.1, Math.min(10, linearGain));
+
+      // Convert to dB for display (clamped to -24dB to +24dB)
+      const displayGain = Math.max(-24, Math.min(24, response));
+
+      // Map to canvas coordinates
+      const y = centerY - (displayGain / 24) * (height / 2 - 10);
+      points.push({ x: i, y });
+
+      if (i === 0) {
+        ctx.moveTo(i, y);
+      } else {
+        ctx.lineTo(i, y);
+      }
+    }
+
+    ctx.stroke();
+
+    // Draw frequency markers
+    ctx.fillStyle = '#666';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+
+    const markerFreqs = [100, 1000, 10000];
+    markerFreqs.forEach((freq) => {
+      const x =
+        (Math.log(freq / minFreq) / Math.log(maxFreq / minFreq)) * width;
+      ctx.beginPath();
+      ctx.moveTo(x, height - 15);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+      ctx.fillText(formatFrequency(freq), x, height - 12);
+    });
+
+    // Draw gain markers
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    [-12, 0, 12].forEach((db) => {
+      const y = centerY - (db / 24) * (height / 2 - 10);
+      ctx.fillText(`${db > 0 ? '+' : ''}${db}dB`, width - 5, y);
+    });
+  }
+
+  onMount(() => {
+    if (eqCanvas) {
+      const rect = eqCanvas.getBoundingClientRect();
+      eqCanvas.width = rect.width * (window.devicePixelRatio || 1);
+      eqCanvas.height = rect.height * (window.devicePixelRatio || 1);
+      const ctx = eqCanvas.getContext('2d');
+      ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+      drawEQ();
+    }
+  });
+
+  $: if (track && eqCanvas) {
+    drawEQ();
   }
 </script>
 
@@ -103,47 +267,123 @@
       />
     </div>
 
-    <!-- EQ Knobs -->
-    <div class="eq-knobs">
-      <Knob
-        bind:value={lowEQ}
-        min={-12}
-        max={12}
-        step={0.1}
-        label="Low"
-        unit="dB"
-        size={60}
-        on:change={(e) => {
-          lowEQ = e.detail;
-          handleLowEQChange();
-        }}
-      />
-      <Knob
-        bind:value={midEQ}
-        min={-12}
-        max={12}
-        step={0.1}
-        label="Mid"
-        unit="dB"
-        size={60}
-        on:change={(e) => {
-          midEQ = e.detail;
-          handleMidEQChange();
-        }}
-      />
-      <Knob
-        bind:value={highEQ}
-        min={-12}
-        max={12}
-        step={0.1}
-        label="High"
-        unit="dB"
-        size={60}
-        on:change={(e) => {
-          highEQ = e.detail;
-          handleHighEQChange();
-        }}
-      />
+    <!-- EQ Controls -->
+    <div class="eq-section">
+      <!-- EQ Display -->
+      <div class="eq-display-container">
+        <canvas bind:this={eqCanvas} class="eq-canvas"></canvas>
+      </div>
+
+      <!-- EQ Knobs and Frequency Controls -->
+      <div class="eq-controls">
+        <!-- Low EQ -->
+        <div class="eq-band">
+          <Knob
+            bind:value={lowEQ}
+            min={-12}
+            max={12}
+            step={0.1}
+            label="Low"
+            unit="dB"
+            size={60}
+            on:change={(e) => {
+              lowEQ = e.detail;
+              handleLowEQChange();
+              drawEQ();
+            }}
+          />
+          <div class="freq-control">
+            <label for="low-freq-{trackNumber}">Freq</label>
+            <input
+              id="low-freq-{trackNumber}"
+              type="range"
+              min="20"
+              max="500"
+              step="1"
+              value={lowFreq}
+              on:input={handleLowFreqChange}
+              on:change={(e) => {
+                handleLowFreqChange(e);
+                drawEQ();
+              }}
+              class="freq-slider"
+            />
+            <span class="freq-value">{formatFrequency(lowFreq)}Hz</span>
+          </div>
+        </div>
+
+        <!-- Mid EQ -->
+        <div class="eq-band">
+          <Knob
+            bind:value={midEQ}
+            min={-12}
+            max={12}
+            step={0.1}
+            label="Mid"
+            unit="dB"
+            size={60}
+            on:change={(e) => {
+              midEQ = e.detail;
+              handleMidEQChange();
+              drawEQ();
+            }}
+          />
+          <div class="freq-control">
+            <label for="mid-freq-{trackNumber}">Freq</label>
+            <input
+              id="mid-freq-{trackNumber}"
+              type="range"
+              min="200"
+              max="5000"
+              step="10"
+              value={midFreq}
+              on:input={handleMidFreqChange}
+              on:change={(e) => {
+                handleMidFreqChange(e);
+                drawEQ();
+              }}
+              class="freq-slider"
+            />
+            <span class="freq-value">{formatFrequency(midFreq)}Hz</span>
+          </div>
+        </div>
+
+        <!-- High EQ -->
+        <div class="eq-band">
+          <Knob
+            bind:value={highEQ}
+            min={-12}
+            max={12}
+            step={0.1}
+            label="High"
+            unit="dB"
+            size={60}
+            on:change={(e) => {
+              highEQ = e.detail;
+              handleHighEQChange();
+              drawEQ();
+            }}
+          />
+          <div class="freq-control">
+            <label for="high-freq-{trackNumber}">Freq</label>
+            <input
+              id="high-freq-{trackNumber}"
+              type="range"
+              min="1000"
+              max="20000"
+              step="100"
+              value={highFreq}
+              on:input={handleHighFreqChange}
+              on:change={(e) => {
+                handleHighFreqChange(e);
+                drawEQ();
+              }}
+              class="freq-slider"
+            />
+            <span class="freq-value">{formatFrequency(highFreq)}Hz</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -208,10 +448,101 @@
     justify-content: center;
   }
 
-  .eq-knobs {
+  .eq-section {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .eq-display-container {
+    width: 100%;
+    height: 80px;
+    background: #0f0f0f;
+    border: 1px solid #2d2d2d;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .eq-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .eq-controls {
     display: flex;
     gap: 16px;
     justify-content: center;
+  }
+
+  .eq-band {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .freq-control {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+  }
+
+  .freq-control label {
+    font-size: 9px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .freq-slider {
+    width: 100%;
+    height: 4px;
+    background: #333;
+    border-radius: 2px;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .freq-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    background: #4a9eff;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .freq-slider::-webkit-slider-thumb:hover {
+    background: #5aaeff;
+  }
+
+  .freq-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    background: #4a9eff;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+    transition: background 0.15s;
+  }
+
+  .freq-slider::-moz-range-thumb:hover {
+    background: #5aaeff;
+  }
+
+  .freq-value {
+    font-size: 9px;
+    color: #aaa;
+    font-family: 'Courier New', monospace;
+    min-width: 50px;
+    text-align: center;
   }
 
   .volume-control {

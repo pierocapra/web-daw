@@ -232,13 +232,6 @@
     ctx.fillStyle = '#0f0f0f';
     ctx.fillRect(0, 0, width, height);
 
-    // Debug: Draw a test rectangle to verify canvas is working
-    ctx.fillStyle = '#333';
-    ctx.fillRect(10, 10, 50, 20);
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px monospace';
-    ctx.fillText(`W:${width} H:${height}`, 15, 25);
-
     // Draw grid lines
     ctx.strokeStyle = '#1a1a1a';
     ctx.lineWidth = 1;
