@@ -12,6 +12,11 @@ export class Track {
     this.startTime = 0;
     this.pauseTime = 0;
     this.offset = 0;
+    this.fileName = null;
+    this.isMuted = false;
+    this.isSoloed = false;
+    this.userVolume = 1.0; // User-set volume (0.0 to 1.0) - always preserved
+    this.preMuteVolume = 1.0; // Store volume before mute (for solo/mute functionality)
 
     // Create audio nodes
     this.gainNode = audioContext.createGain();
@@ -45,7 +50,7 @@ export class Track {
 
     // Initialize values
     this.setGain(1.0);
-    this.setVolume(1.0);
+    this.setVolume(1.0); // This will also set userVolume
   }
 
   async loadAudioFile(file) {
@@ -138,11 +143,49 @@ export class Track {
 
   setVolume(value) {
     // Volume: 0.0 to 1.0
-    this.volumeNode.gain.value = value;
+    // Store the user's intended volume
+    this.userVolume = Math.max(0, Math.min(1, value));
+    // Apply the volume, respecting mute/solo state
+    this._applyEffectiveVolume();
   }
 
   getVolume() {
+    // Return the user-set volume, not the effective volume
+    return this.userVolume;
+  }
+
+  getEffectiveVolume() {
+    // Return the actual volume being applied (after mute/solo)
     return this.volumeNode.gain.value;
+  }
+
+  _applyEffectiveVolume() {
+    // Apply the effective volume based on mute/solo state and user volume
+    if (this.isMuted) {
+      // Track is manually muted
+      this.volumeNode.gain.value = 0;
+    } else {
+      // Use the user's volume setting
+      this.volumeNode.gain.value = this.userVolume;
+    }
+  }
+
+  setMute(muted) {
+    this.isMuted = muted;
+    // Apply effective volume (will respect mute state and user volume)
+    this._applyEffectiveVolume();
+  }
+
+  setSolo(soloed) {
+    this.isSoloed = soloed;
+  }
+
+  getMute() {
+    return this.isMuted;
+  }
+
+  getSolo() {
+    return this.isSoloed;
   }
 
   setLowEQ(value) {

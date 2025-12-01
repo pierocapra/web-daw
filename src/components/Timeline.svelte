@@ -1,8 +1,89 @@
 <script>
   import { onMount, onDestroy, afterUpdate } from 'svelte';
   import { audioContextManager } from '../lib/audioContext.js';
+  import { createEventDispatcher } from 'svelte';
 
   export let tracks = [];
+
+  const dispatch = createEventDispatcher();
+
+  // Force update counter to trigger reactivity
+  let updateCounter = 0;
+
+  // Reactive signature for track states (mute/solo/loaded) to force updates
+  $: tracksStateSignature =
+    tracks
+      .map((track, i) => {
+        if (!track) return `${i}-null`;
+        return `${i}-mute:${track.isMuted}-solo:${track.isSoloed}-loaded:${!!track.audioBuffer}`;
+      })
+      .join('|') +
+    '-' +
+    updateCounter;
+
+  function handleMuteClick(track, index) {
+    if (!track) return;
+    const newMuteState = !track.isMuted;
+    track.setMute(newMuteState);
+    // Update solo states if needed
+    updateSoloStates();
+    // Force reactivity update
+    updateCounter++;
+    dispatch('trackUpdated', { trackIndex: index });
+  }
+
+  function handleSoloClick(track, index) {
+    if (!track) return;
+    const newSoloState = !track.isSoloed;
+    track.setSolo(newSoloState);
+    // Update solo states for all tracks
+    updateSoloStates();
+    // Force reactivity update
+    updateCounter++;
+    dispatch('trackUpdated', { trackIndex: index });
+  }
+
+  function updateSoloStates() {
+    const anySoloed = tracks.some((t) => t && t.isSoloed);
+
+    tracks.forEach((track) => {
+      if (!track) return;
+
+      if (anySoloed) {
+        // If any track is soloed
+        if (track.isSoloed) {
+          // Soloed tracks: apply user volume if not manually muted
+          if (!track.isMuted) {
+            track.volumeNode.gain.value = track.userVolume;
+          } else {
+            // Manually muted tracks stay muted
+            track.volumeNode.gain.value = 0;
+          }
+        } else {
+          // Non-soloed tracks: mute them (unless they were manually muted, then keep them muted)
+          if (!track.isMuted) {
+            // Store user volume before muting due to solo (if not already stored)
+            if (track.volumeNode.gain.value > 0) {
+              track.preMuteVolume = track.userVolume;
+            }
+            track.volumeNode.gain.value = 0;
+          } else {
+            // Manually muted tracks stay muted
+            track.volumeNode.gain.value = 0;
+          }
+        }
+      } else {
+        // No solo active: restore user volumes for tracks that were muted by solo only
+        if (!track.isMuted) {
+          // Restore user volume if it was muted by solo
+          track.volumeNode.gain.value = track.userVolume;
+        } else {
+          // Manually muted tracks stay muted
+          track.volumeNode.gain.value = 0;
+        }
+      }
+    });
+  }
 
   let lastTracksSignature = '';
 
@@ -12,6 +93,7 @@
   let maxDuration = 0;
   let animationFrameId = null;
   let isPlaying = false;
+  let trackHeight = 80; // Height of each track row
 
   // Create a reactive signature of playing tracks to detect changes
   $: playingTracksSignature = tracks
@@ -131,8 +213,9 @@
       return;
     }
 
-    const containerWidth = Math.max(rect.width - 40, 400);
-    const containerHeight = Math.max(tracks.length * 60, 200);
+    // Container is already the canvas wrapper, so use its full width
+    const containerWidth = Math.max(rect.width, 400);
+    const containerHeight = Math.max(tracks.length * 80, 200);
 
     // Set canvas pixel dimensions (this also clears the canvas)
     canvas.width = containerWidth;
@@ -141,7 +224,7 @@
     const ctx = canvas.getContext('2d');
     const width = canvas.width;
     const height = canvas.height;
-    const trackHeight = height / tracks.length;
+    trackHeight = height / tracks.length;
 
     ctx.clearRect(0, 0, width, height);
 
@@ -253,6 +336,15 @@
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  function handleFileSelect(event, track, trackIndex) {
+    const file = event.target.files[0];
+    if (file && track) {
+      dispatch('fileLoaded', { track, trackIndex, fileName: file.name, file });
+      // Reset input so same file can be selected again
+      event.target.value = '';
+    }
   }
 
   function updateTimeline() {
@@ -455,6 +547,8 @@
       });
       lastTracksSignature = currentSignature;
       updateWaveformsAndDraw();
+      // Force UI update when audio buffers change
+      updateCounter++;
     }
   });
 
@@ -467,7 +561,65 @@
 
 <div class="timeline-container">
   {#if tracks.length > 0}
-    <canvas bind:this={timelineCanvas} class="timeline-canvas"></canvas>
+    <div class="timeline-wrapper">
+      <div class="track-info-sidebar">
+        {#each tracks as track, index (tracksStateSignature + '-' + index)}
+          <div
+            class="track-info-panel"
+            style="min-height: {Math.max(trackHeight, 80)}px;"
+          >
+            <div class="track-info-content">
+              {#if track && track.audioBuffer}
+                <div class="track-status-indicator loaded"></div>
+              {:else}
+                <div class="track-status-indicator empty"></div>
+              {/if}
+              <div class="track-number">T{index + 1}</div>
+              {#if track && track.audioBuffer}
+                <div class="track-filename" title={track.fileName || ''}>
+                  {track.fileName || 'Loaded'}
+                </div>
+              {:else}
+                <label
+                  for="timeline-file-input-{index}"
+                  class="load-button-small"
+                >
+                  Load
+                </label>
+                <input
+                  id="timeline-file-input-{index}"
+                  type="file"
+                  accept="audio/*"
+                  on:change={(e) => handleFileSelect(e, track, index)}
+                  class="file-input"
+                />
+              {/if}
+              <div class="track-controls-row">
+                <button
+                  class="control-button mute-button"
+                  class:muted={track && track.isMuted === true}
+                  on:click={() => handleMuteClick(track, index)}
+                  title="Mute"
+                >
+                  M
+                </button>
+                <button
+                  class="control-button solo-button"
+                  class:soloed={track && track.isSoloed === true}
+                  on:click={() => handleSoloClick(track, index)}
+                  title="Solo"
+                >
+                  S
+                </button>
+              </div>
+            </div>
+          </div>
+        {/each}
+      </div>
+      <div class="timeline-canvas-wrapper">
+        <canvas bind:this={timelineCanvas} class="timeline-canvas"></canvas>
+      </div>
+    </div>
   {:else}
     <div class="timeline-placeholder">
       <p>Load audio files to see the timeline</p>
@@ -480,10 +632,169 @@
     width: 100%;
     background: #1a1a1a;
     border-bottom: 2px solid #2d2d2d;
-    padding: 20px;
     min-height: 200px;
-    overflow-x: auto;
+    overflow: hidden;
+  }
+
+  .timeline-wrapper {
+    display: flex;
+    flex-direction: row;
     position: relative;
+  }
+
+  .track-info-sidebar {
+    width: 120px;
+    min-width: 120px;
+    background: #1f1f1f;
+    border-right: 1px solid #2d2d2d;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .track-info-panel {
+    border-bottom: 1px solid #2d2d2d;
+    display: flex;
+    align-items: flex-start;
+    padding: 6px 8px;
+    background: #1f1f1f;
+    transition: background 0.15s;
+    min-height: 80px;
+    justify-content: center;
+    position: relative;
+  }
+
+  .track-info-panel:hover {
+    background: #252525;
+  }
+
+  .track-info-content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .track-number {
+    font-size: 10px;
+    font-weight: 700;
+    color: #666;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .track-status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    position: absolute;
+    top: 6px;
+    right: 8px;
+  }
+
+  .track-status-indicator.loaded {
+    background: #2ecc71;
+    box-shadow: 0 0 4px rgba(46, 204, 113, 0.5);
+  }
+
+  .track-status-indicator.empty {
+    background: #444;
+  }
+
+  .track-filename {
+    font-size: 9px;
+    color: #aaa;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+    line-height: 1.3;
+    min-height: 12px;
+  }
+
+  .load-button-small {
+    font-size: 8px;
+    padding: 3px 6px;
+    background: #333;
+    color: #999;
+    border-radius: 3px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.15s;
+    border: 1px solid #3a3a3a;
+    display: inline-block;
+  }
+
+  .load-button-small:hover {
+    background: #3a3a3a;
+    color: #ccc;
+    border-color: #4a4a4a;
+  }
+
+  .file-input {
+    display: none;
+  }
+
+  .track-controls-row {
+    display: flex;
+    gap: 4px;
+    margin-top: auto;
+    width: 100%;
+    padding-top: 4px;
+  }
+
+  .control-button {
+    flex: 1;
+    padding: 2px 4px;
+    font-size: 8px;
+    font-weight: 600;
+    color: #888;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 2px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.15s;
+    min-width: 0;
+  }
+
+  .control-button:hover {
+    background: #333;
+    color: #aaa;
+    border-color: #4a4a4a;
+  }
+
+  .control-button.mute-button.muted {
+    background: #ff4444 !important;
+    color: #fff !important;
+    border-color: #ff6666 !important;
+  }
+
+  .control-button.mute-button.muted:hover {
+    background: #ff5555 !important;
+  }
+
+  .control-button.solo-button.soloed {
+    background: #ffaa00 !important;
+    color: #fff !important;
+    border-color: #ffbb33 !important;
+  }
+
+  .control-button.solo-button.soloed:hover {
+    background: #ffbb11 !important;
+  }
+
+  .timeline-canvas-wrapper {
+    flex: 1;
+    position: relative;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0;
   }
 
   .timeline-canvas {
@@ -497,6 +808,7 @@
     text-align: center;
     color: #555;
     padding: 60px 20px;
+    width: 100%;
   }
 
   .timeline-placeholder p {

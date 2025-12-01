@@ -1,13 +1,8 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
   import Knob from './Knob.svelte';
 
   export let track = null;
   export let trackNumber = 1;
-
-  const dispatch = createEventDispatcher();
-
-  let fileName = 'No file loaded';
   let volume = 1.0;
   let gain = 1.0;
   let lowEQ = 0;
@@ -22,19 +17,6 @@
     midEQ = track.getMidEQ();
     highEQ = track.getHighEQ();
     hasAudioBuffer = !!track.audioBuffer;
-  }
-
-  function handleFileSelect(event) {
-    const file = event.target.files[0];
-    if (file && track) {
-      fileName = file.name;
-      track.loadAudioFile(file).then((success) => {
-        if (success) {
-          hasAudioBuffer = true;
-          dispatch('fileLoaded', { trackId: track.id, fileName: file.name });
-        }
-      });
-    }
   }
 
   function handleVolumeChange(event) {
@@ -100,7 +82,6 @@
   <div class="track-header">
     <div class="track-info">
       <h3>Track {trackNumber}</h3>
-      <span class="file-name">{fileName}</span>
     </div>
   </div>
 
@@ -164,20 +145,6 @@
         }}
       />
     </div>
-
-    <!-- File Upload -->
-    <div class="file-upload">
-      <label for="file-input-{trackNumber}" class="file-label">
-        Load Audio
-      </label>
-      <input
-        id="file-input-{trackNumber}"
-        type="file"
-        accept="audio/*"
-        on:change={handleFileSelect}
-        class="file-input"
-      />
-    </div>
   </div>
 
   <!-- Volume at bottom -->
@@ -227,16 +194,6 @@
     font-weight: 600;
   }
 
-  .file-name {
-    font-size: 11px;
-    color: #888;
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 180px;
-  }
-
   .track-controls {
     padding: 16px;
     display: flex;
@@ -255,34 +212,6 @@
     display: flex;
     gap: 16px;
     justify-content: center;
-  }
-
-  .file-upload {
-    width: 100%;
-  }
-
-  .file-label {
-    display: block;
-    padding: 8px 16px;
-    background: #333;
-    color: #ccc;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 11px;
-    transition: background 0.15s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    text-align: center;
-    border: 1px solid #3a3a3a;
-  }
-
-  .file-label:hover {
-    background: #3a3a3a;
-    border-color: #4a4a4a;
-  }
-
-  .file-input {
-    display: none;
   }
 
   .volume-control {

@@ -47,6 +47,18 @@
     timelineKey++;
   }
 
+  async function handleTimelineFileLoaded(event) {
+    const { track, trackIndex, fileName, file } = event.detail;
+    if (track && file) {
+      const success = await track.loadAudioFile(file);
+      if (success) {
+        // Store filename on track for display
+        track.fileName = fileName;
+        handleFileLoaded({ detail: { trackId: track.id, fileName } });
+      }
+    }
+  }
+
   function handleMasterVolumeChange(event) {
     const value = parseFloat(event.target.value);
     masterVolume = value;
@@ -207,7 +219,12 @@
     {:else}
       <div class="daw-workspace">
         <div class="timeline-wrapper">
-          <Timeline {tracks} key={timelineKey} bind:this={timelineComponent} />
+          <Timeline
+            {tracks}
+            key={timelineKey}
+            bind:this={timelineComponent}
+            on:fileLoaded={handleTimelineFileLoaded}
+          />
         </div>
         <div class="tracks-container">
           {#each tracks as track, index}
