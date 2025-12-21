@@ -149,7 +149,7 @@
 
     // Draw frequency response curve
     ctx.strokeStyle = '#4a9eff';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1;
     ctx.beginPath();
 
     const points = [];
@@ -206,24 +206,24 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
 
-    const markerFreqs = [100, 1000, 10000];
-    markerFreqs.forEach((freq) => {
-      const x =
-        (Math.log(freq / minFreq) / Math.log(maxFreq / minFreq)) * width;
-      ctx.beginPath();
-      ctx.moveTo(x, height - 15);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-      ctx.fillText(formatFrequency(freq), x, height - 12);
-    });
+    // const markerFreqs = [100, 1000, 10000];
+    // markerFreqs.forEach((freq) => {
+    //   const x =
+    //     (Math.log(freq / minFreq) / Math.log(maxFreq / minFreq)) * width;
+    //   ctx.beginPath();
+    //   ctx.moveTo(x, height - 15);
+    //   ctx.lineTo(x, height);
+    //   ctx.stroke();
+    //   ctx.fillText(formatFrequency(freq), x, height - 12);
+    // });
 
-    // Draw gain markers
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    [-12, 0, 12].forEach((db) => {
-      const y = centerY - (db / 24) * (height / 2 - 10);
-      ctx.fillText(`${db > 0 ? '+' : ''}${db}dB`, width - 5, y);
-    });
+    // // Draw gain markers
+    // ctx.textAlign = 'right';
+    // ctx.textBaseline = 'middle';
+    // [-12, 0, 12].forEach((db) => {
+    //   const y = centerY - (db / 24) * (height / 2 - 10);
+    //   ctx.fillText(`${db > 0 ? '+' : ''}${db}dB`, width - 5, y);
+    // });
   }
 
   onMount(() => {
@@ -259,7 +259,7 @@
         step={0.01}
         label="Gain"
         unit=""
-        size={70}
+        size={40}
         on:change={(e) => {
           gain = e.detail;
           handleGainChange();
@@ -285,7 +285,7 @@
             step={0.1}
             label="Low"
             unit="dB"
-            size={60}
+            size={30}
             on:change={(e) => {
               lowEQ = e.detail;
               handleLowEQChange();
@@ -293,7 +293,6 @@
             }}
           />
           <div class="freq-control">
-            <label for="low-freq-{trackNumber}">Freq</label>
             <input
               id="low-freq-{trackNumber}"
               type="range"
@@ -321,7 +320,7 @@
             step={0.1}
             label="Mid"
             unit="dB"
-            size={60}
+            size={30}
             on:change={(e) => {
               midEQ = e.detail;
               handleMidEQChange();
@@ -329,7 +328,6 @@
             }}
           />
           <div class="freq-control">
-            <label for="mid-freq-{trackNumber}">Freq</label>
             <input
               id="mid-freq-{trackNumber}"
               type="range"
@@ -357,7 +355,7 @@
             step={0.1}
             label="High"
             unit="dB"
-            size={60}
+            size={30}
             on:change={(e) => {
               highEQ = e.detail;
               handleHighEQChange();
@@ -365,7 +363,6 @@
             }}
           />
           <div class="freq-control">
-            <label for="high-freq-{trackNumber}">Freq</label>
             <input
               id="high-freq-{trackNumber}"
               type="range"
@@ -413,7 +410,8 @@
     background: #1e1e1e;
     border-radius: 4px;
     border: 1px solid #2d2d2d;
-    min-width: 200px;
+    /* min-width: 200px; */
+    max-width: 100px;
     width: 100%;
     overflow: hidden;
   }
@@ -422,13 +420,13 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    padding: 2px 8px;
     border-bottom: 1px solid #2d2d2d;
     background: #1f1f1f;
   }
 
   .track-info h3 {
-    font-size: 14px;
+    font-size: 10px;
     margin: 0 0 4px 0;
     color: #fff;
     font-weight: 600;
@@ -439,7 +437,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 20px;
+    gap: 10px;
     flex: 1;
   }
 
@@ -457,7 +455,7 @@
 
   .eq-display-container {
     width: 100%;
-    height: 80px;
+    height: 30px;
     background: #0f0f0f;
     border: 1px solid #2d2d2d;
     border-radius: 4px;
@@ -472,6 +470,8 @@
 
   .eq-controls {
     display: flex;
+    flex-direction: column;
+    align-items: center;
     gap: 16px;
     justify-content: center;
   }
@@ -563,18 +563,20 @@
 
   .volume-slider-container {
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 10px;
   }
 
   .volume-slider {
-    flex: 1;
-    height: 4px;
+    width: 4px;
+    height: 120px;
     background: #333;
     border-radius: 2px;
     outline: none;
-    -webkit-appearance: none;
-    appearance: none;
+    -webkit-appearance: slider-vertical; /* WebKit */
+    writing-mode: bt-lr; /* IE */
+    appearance: slider-vertical;
   }
 
   .volume-slider::-webkit-slider-thumb {
@@ -608,7 +610,7 @@
 
   .volume-value {
     min-width: 45px;
-    text-align: right;
+    text-align: center;
     font-size: 11px;
     color: #888;
     font-family: 'Courier New', monospace;
