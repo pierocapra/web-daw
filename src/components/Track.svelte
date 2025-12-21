@@ -1,9 +1,18 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { createEventDispatcher } from 'svelte';
   import Knob from './Knob.svelte';
 
   export let track = null;
   export let trackNumber = 1;
+
+  const dispatch = createEventDispatcher();
+
+  function handleDelete() {
+    if (confirm('Are you sure you want to delete this track?')) {
+      dispatch('delete');
+    }
+  }
 
   let eqCanvas;
   let volume = 1.0;
@@ -247,6 +256,14 @@
     <div class="track-info">
       <h3>Track {trackNumber}</h3>
     </div>
+    <button
+      class="delete-track-button"
+      on:click={handleDelete}
+      title="Delete Track"
+      aria-label="Delete Track"
+    >
+      ×
+    </button>
   </div>
 
   <div class="track-controls">
@@ -260,6 +277,7 @@
         label="Gain"
         unit=""
         size={40}
+        color="#ff4444"
         on:change={(e) => {
           gain = e.detail;
           handleGainChange();
@@ -286,6 +304,7 @@
             label="Low"
             unit="dB"
             size={30}
+            color="#4a9eff"
             on:change={(e) => {
               lowEQ = e.detail;
               handleLowEQChange();
@@ -305,7 +324,7 @@
                 handleLowFreqChange(e);
                 drawEQ();
               }}
-              class="freq-slider"
+              class="freq-slider freq-slider-low"
             />
             <span class="freq-value">{formatFrequency(lowFreq)}Hz</span>
           </div>
@@ -321,6 +340,7 @@
             label="Mid"
             unit="dB"
             size={30}
+            color="#ffd700"
             on:change={(e) => {
               midEQ = e.detail;
               handleMidEQChange();
@@ -340,7 +360,7 @@
                 handleMidFreqChange(e);
                 drawEQ();
               }}
-              class="freq-slider"
+              class="freq-slider freq-slider-mid"
             />
             <span class="freq-value">{formatFrequency(midFreq)}Hz</span>
           </div>
@@ -356,6 +376,7 @@
             label="High"
             unit="dB"
             size={30}
+            color="#4caf50"
             on:change={(e) => {
               highEQ = e.detail;
               handleHighEQChange();
@@ -375,7 +396,7 @@
                 handleHighFreqChange(e);
                 drawEQ();
               }}
-              class="freq-slider"
+              class="freq-slider freq-slider-high"
             />
             <span class="freq-value">{formatFrequency(highFreq)}Hz</span>
           </div>
@@ -408,9 +429,9 @@
     display: flex;
     flex-direction: column;
     background: #1e1e1e;
-    border-radius: 4px;
-    border: 1px solid #2d2d2d;
-    /* min-width: 200px; */
+    /* border-radius: 4px; */
+    border-right: 1px solid #2d2d2d;
+    border-left: 1px solid #2d2d2d;
     max-width: 100px;
     width: 100%;
     overflow: hidden;
@@ -430,6 +451,34 @@
     margin: 0 0 4px 0;
     color: #fff;
     font-weight: 600;
+  }
+
+  .delete-track-button {
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    transition: all 0.15s;
+    opacity: 0.6;
+  }
+
+  .delete-track-button:hover {
+    background: #e74c3c;
+    color: #fff;
+    opacity: 1;
+  }
+
+  .delete-track-button:active {
+    transform: scale(0.9);
   }
 
   .track-controls {
@@ -491,13 +540,6 @@
     width: 100%;
   }
 
-  .freq-control label {
-    font-size: 9px;
-    color: #888;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
   .freq-slider {
     width: 100%;
     height: 4px;
@@ -535,6 +577,57 @@
 
   .freq-slider::-moz-range-thumb:hover {
     background: #5aaeff;
+  }
+
+  /* Low frequency slider - Blue */
+  .freq-slider-low::-webkit-slider-thumb {
+    background: #4a9eff;
+  }
+
+  .freq-slider-low::-webkit-slider-thumb:hover {
+    background: #5aaeff;
+  }
+
+  .freq-slider-low::-moz-range-thumb {
+    background: #4a9eff;
+  }
+
+  .freq-slider-low::-moz-range-thumb:hover {
+    background: #5aaeff;
+  }
+
+  /* Mid frequency slider - Yellow */
+  .freq-slider-mid::-webkit-slider-thumb {
+    background: #ffd700;
+  }
+
+  .freq-slider-mid::-webkit-slider-thumb:hover {
+    background: #ffed4e;
+  }
+
+  .freq-slider-mid::-moz-range-thumb {
+    background: #ffd700;
+  }
+
+  .freq-slider-mid::-moz-range-thumb:hover {
+    background: #ffed4e;
+  }
+
+  /* High frequency slider - Green */
+  .freq-slider-high::-webkit-slider-thumb {
+    background: #4caf50;
+  }
+
+  .freq-slider-high::-webkit-slider-thumb:hover {
+    background: #66bb6a;
+  }
+
+  .freq-slider-high::-moz-range-thumb {
+    background: #4caf50;
+  }
+
+  .freq-slider-high::-moz-range-thumb:hover {
+    background: #66bb6a;
   }
 
   .freq-value {
@@ -584,20 +677,20 @@
     appearance: none;
     width: 14px;
     height: 14px;
-    background: #4a9eff;
+    background: #ffffff;
     border-radius: 50%;
     cursor: pointer;
     transition: background 0.15s;
   }
 
   .volume-slider::-webkit-slider-thumb:hover {
-    background: #5aaeff;
+    background: #f0f0f0;
   }
 
   .volume-slider::-moz-range-thumb {
     width: 14px;
     height: 14px;
-    background: #4a9eff;
+    background: #ffffff;
     border-radius: 50%;
     cursor: pointer;
     border: none;
@@ -605,7 +698,7 @@
   }
 
   .volume-slider::-moz-range-thumb:hover {
-    background: #5aaeff;
+    background: #f0f0f0;
   }
 
   .volume-value {

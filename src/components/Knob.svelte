@@ -9,6 +9,7 @@
   export let label = '';
   export let unit = '';
   export let size = 60;
+  export let color = '#4a9eff';
 
   const dispatch = createEventDispatcher();
 
@@ -146,7 +147,7 @@
   <div class="knob-wrapper" style="width: {size}px; height: {size}px;">
     <div
       class="knob"
-      style="transform: rotate({rotation}deg);"
+      style="transform: rotate({rotation}deg); --knob-color: {color};"
       role="slider"
       aria-valuenow={value}
       aria-valuemin={min}
@@ -209,13 +210,13 @@
   .knob-indicator {
     width: 3px;
     height: 30%;
-    background: #4a9eff;
+    background: var(--knob-color, #4a9eff);
     border-radius: 2px;
     position: absolute;
     top: 8%;
     left: 50%;
     transform: translateX(-50%);
-    box-shadow: 0 0 4px rgba(74, 158, 255, 0.5);
+    filter: drop-shadow(0 0 3px var(--knob-color, #4a9eff));
   }
 
   .knob-value {

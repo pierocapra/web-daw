@@ -294,4 +294,42 @@ export class Track {
     const newTime = Math.max(currentTime - seconds, 0);
     this.seek(newTime);
   }
+
+  cleanup() {
+    // Stop playback if playing
+    if (this.isPlaying) {
+      this.stop();
+    }
+
+    // Disconnect all audio nodes
+    if (this.source) {
+      try {
+        this.source.stop();
+      } catch (e) {
+        // Source may already be stopped
+      }
+      this.source.disconnect();
+      this.source = null;
+    }
+
+    // Disconnect gain and volume nodes
+    if (this.gainNode) {
+      this.gainNode.disconnect();
+    }
+    if (this.volumeNode) {
+      this.volumeNode.disconnect();
+    }
+    if (this.lowFilter) {
+      this.lowFilter.disconnect();
+    }
+    if (this.midFilter) {
+      this.midFilter.disconnect();
+    }
+    if (this.highFilter) {
+      this.highFilter.disconnect();
+    }
+
+    // Clear audio buffer reference
+    this.audioBuffer = null;
+  }
 }

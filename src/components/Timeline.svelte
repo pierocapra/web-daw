@@ -215,7 +215,8 @@
 
     // Container is already the canvas wrapper, so use its full width
     const containerWidth = Math.max(rect.width, 400);
-    const containerHeight = Math.max(tracks.length * 80, 200);
+    // Calculate height based on number of tracks, ensuring it matches the sidebar height exactly
+    const containerHeight = tracks.length > 0 ? tracks.length * 80 : 80;
 
     // Set canvas pixel dimensions (this also clears the canvas)
     canvas.width = containerWidth;
@@ -559,6 +560,7 @@
         {#each tracks as track, index (tracksStateSignature + '-' + index)}
           <div
             class="track-info-panel"
+            class:last-track={index === tracks.length - 1}
             style="min-height: {Math.max(trackHeight, 80)}px;"
           >
             <div class="track-info-content">
@@ -625,7 +627,7 @@
     width: 100%;
     background: #1a1a1a;
     border-bottom: 2px solid #2d2d2d;
-    min-height: 200px;
+    min-height: 80px;
     overflow: hidden;
   }
 
@@ -643,6 +645,7 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    align-self: flex-start;
   }
 
   .track-info-panel {
@@ -655,6 +658,10 @@
     min-height: 80px;
     justify-content: center;
     position: relative;
+  }
+
+  .track-info-panel.last-track {
+    border-bottom: none;
   }
 
   .track-info-panel:hover {
@@ -788,11 +795,12 @@
     overflow-x: auto;
     overflow-y: hidden;
     padding: 0;
+    align-self: flex-start;
   }
 
   .timeline-canvas {
     width: 100%;
-    min-height: 200px;
+    height: 100%;
     display: block;
     background: #0f0f0f;
   }

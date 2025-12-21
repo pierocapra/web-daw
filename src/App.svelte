@@ -11,21 +11,12 @@
   let isPlayingAll = false;
   let loadedTracksCount = 0;
   let timelineComponent;
-  const NUM_TRACKS = 4; // Start with 4 tracks, easily scalable
+  let nextTrackId = 1;
 
   onMount(async () => {
     try {
       await audioContextManager.init();
       initialized = true;
-
-      // Create initial tracks
-      const destination = audioContextManager.getDestination();
-      const context = audioContextManager.getContext();
-
-      for (let i = 0; i < NUM_TRACKS; i++) {
-        const track = new Track(context, destination, i + 1);
-        tracks = [...tracks, track];
-      }
     } catch (error) {
       console.error('Failed to initialize DAW:', error);
       alert(
@@ -33,6 +24,36 @@
       );
     }
   });
+
+  function addTrack() {
+    if (!initialized) return;
+
+    const destination = audioContextManager.getDestination();
+    const context = audioContextManager.getContext();
+    const track = new Track(context, destination, nextTrackId);
+    nextTrackId++;
+    tracks = [...tracks, track];
+  }
+
+  function deleteTrack(trackId) {
+    const trackIndex = tracks.findIndex((t) => t.id === trackId);
+    if (trackIndex === -1) return;
+
+    const track = tracks[trackIndex];
+    // Cleanup the track before removing
+    track.cleanup();
+
+    // Remove track from array
+    tracks = tracks.filter((t) => t.id !== trackId);
+
+    // Update loaded tracks count
+    loadedTracksCount = tracks.filter(
+      (track) => track.audioBuffer !== null
+    ).length;
+
+    // Force timeline update
+    timelineKey++;
+  }
 
   let timelineKey = 0; // Key to force timeline re-render
 
@@ -196,7 +217,7 @@
         </button>
       </div>
       <div class="master-volume-control">
-        <label>Master Volume</label>
+        <label for="master-volume">Master Volume</label>
         <div class="master-slider-container">
           <input
             type="range"
@@ -232,8 +253,17 @@
               {track}
               trackNumber={index + 1}
               on:fileLoaded={handleFileLoaded}
+              on:delete={() => deleteTrack(track.id)}
             />
           {/each}
+          <button
+            class="add-track-button"
+            on:click={addTrack}
+            title="Add Track"
+          >
+            <span class="add-track-icon">+</span>
+            <span class="add-track-label">Add Track</span>
+          </button>
         </div>
       </div>
     {/if}
@@ -364,6 +394,7 @@
     border-radius: 3px;
     outline: none;
     -webkit-appearance: none;
+    appearance: none;
   }
 
   .master-slider::-webkit-slider-thumb {
@@ -422,10 +453,46 @@
     flex: 1;
     display: flex;
     flex-direction: row;
-    gap: 8px;
-    padding: 8px;
+    /* gap: 2px; */
+    /* padding: 8px; */
     overflow-x: auto;
     overflow-y: hidden;
     align-items: stretch;
+  }
+
+  .add-track-button {
+    min-width: 100px;
+    height: auto;
+    background: #2a2a2a;
+    border: 1px dashed #4a4a4a;
+    border-radius: 4px;
+    color: #888;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 20px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .add-track-button:hover {
+    background: #333;
+    border-color: #4a9eff;
+    color: #4a9eff;
+  }
+
+  .add-track-icon {
+    font-size: 32px;
+    font-weight: 300;
+    line-height: 1;
+  }
+
+  .add-track-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 </style>
