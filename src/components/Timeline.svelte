@@ -10,12 +10,13 @@
   // Force update counter to trigger reactivity
   let updateCounter = 0;
 
-  // Reactive signature for track states (mute/solo/loaded) to force updates
+  // Reactive signature for track states (mute/solo/loaded/recording) to force updates
   $: tracksStateSignature =
     tracks
       .map((track, i) => {
         if (!track) return `${i}-null`;
-        return `${i}-mute:${track.isMuted}-solo:${track.isSoloed}-loaded:${!!track.audioBuffer}`;
+        const level = track.getAudioLevel ? track.getAudioLevel() : 0;
+        return `${i}-mute:${track.isMuted}-solo:${track.isSoloed}-loaded:${!!track.audioBuffer}-recording:${track.isRecording}-level:${Math.floor(level * 10)}`;
       })
       .join('|') +
     '-' +
@@ -41,6 +42,144 @@
     // Force reactivity update
     updateCounter++;
     dispatch('trackUpdated', { trackIndex: index });
+  }
+
+  async function enumerateInputDevices() {
+    try {
+      // Request permission first
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      inputDevices = devices
+        .filter((device) => device.kind === 'audioinput')
+        .map((device) => ({
+          deviceId: device.deviceId,
+          label:
+            device.label || `Microphone ${device.deviceId.substring(0, 8)}`,
+        }));
+    } catch (error) {
+      console.error('Error enumerating input devices:', error);
+      inputDevices = [];
+    }
+  }
+
+  async function startRecording(track, index) {
+    if (!track) return;
+
+    const deviceId =
+      !selectedInputDevices[index] || selectedInputDevices[index] === 'default'
+        ? null
+        : selectedInputDevices[index];
+
+    const success = await track.startRecording(deviceId);
+
+    if (success) {
+      // Force update the reactive signature to trigger animation
+      updateCounter++;
+      // Start timeline animation if not already running
+      // Use setTimeout to ensure the reactive statement has processed
+      setTimeout(() => {
+        if (!animationFrameId) {
+          console.log('Starting timeline animation for recording');
+          updateTimeline();
+        }
+      }, 50);
+      dispatch('trackUpdated', { trackIndex: index });
+    } else {
+      alert('Failed to start recording. Please check microphone permissions.');
+    }
+  }
+
+  function stopRecording(track, index) {
+    if (!track) return;
+
+    track.stopRecording();
+    updateCounter++;
+
+    // Dispatch event after a delay to allow audio buffer to load
+    setTimeout(() => {
+      if (track && track.audioBuffer) {
+        dispatch('fileLoaded', { trackId: track.id, fileName: track.fileName });
+      }
+      updateCounter++;
+    }, 1000);
+  }
+
+  function toggleInputSelector(index) {
+    showInputSelectors[index] = !showInputSelectors[index];
+    if (showInputSelectors[index] && inputDevices.length === 0) {
+      enumerateInputDevices();
+    }
+    updateCounter++;
+  }
+
+  function formatDuration(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  // Update audio levels for all tracks
+  function updateAudioLevels() {
+    let hasUpdate = false;
+    tracks.forEach((track, index) => {
+      if (track) {
+        const level = track.getAudioLevel ? track.getAudioLevel() : 0;
+        const currentLevel = audioLevels[index] || 0;
+        // Update if level changed significantly (more than 0.5%)
+        if (Math.abs(currentLevel - level) > 0.005) {
+          audioLevels[index] = level;
+          hasUpdate = true;
+        }
+
+        // Start level monitoring if track is playing or recording
+        if (
+          (track.isPlaying || track.isRecording || track.mediaStream) &&
+          !track.isMonitoringLevels
+        ) {
+          track.startLevelMonitoring();
+        }
+      } else {
+        if (audioLevels[index] !== undefined && audioLevels[index] !== 0) {
+          audioLevels[index] = 0;
+          hasUpdate = true;
+        }
+      }
+    });
+    if (hasUpdate) {
+      updateCounter++;
+      // Force reactivity
+      audioLevels = { ...audioLevels };
+    }
+  }
+
+  // Update recording timers for all tracks
+  function updateRecordingTimers() {
+    let hasUpdate = false;
+    tracks.forEach((track, index) => {
+      if (
+        track &&
+        track.isRecording &&
+        track.recordingStartTime !== undefined
+      ) {
+        const elapsed =
+          track.audioContext.currentTime - track.recordingStartTime;
+        if (recordingTimers[index] !== elapsed) {
+          recordingTimers[index] = elapsed;
+          hasUpdate = true;
+        }
+      } else {
+        if (recordingTimers[index] !== undefined) {
+          recordingTimers[index] = undefined;
+          hasUpdate = true;
+        }
+      }
+    });
+    if (hasUpdate) {
+      // Force reactivity
+      recordingTimers = { ...recordingTimers };
+      updateCounter++;
+    }
   }
 
   function updateSoloStates() {
@@ -94,6 +233,13 @@
   let animationFrameId = null;
   let isPlaying = false;
   let trackHeight = 80; // Height of each track row
+
+  // Recording state
+  let inputDevices = [];
+  let selectedInputDevices = {}; // Track index -> device ID
+  let showInputSelectors = {}; // Track index -> boolean
+  let levelUpdateInterval = null;
+  let audioLevels = {}; // Track index -> audio level (0-1)
 
   // Create a reactive signature of playing tracks to detect changes
   $: playingTracksSignature = tracks
@@ -291,8 +437,15 @@
     });
 
     // Draw playhead
-    if (maxDuration > 0) {
-      const playheadX = (currentTime / maxDuration) * width;
+    // Use a minimum duration if recording and maxDuration is 0
+    const effectiveMaxDuration =
+      maxDuration > 0
+        ? maxDuration
+        : currentTime > 0
+          ? Math.max(currentTime, 10)
+          : 10;
+    if (effectiveMaxDuration > 0 && currentTime >= 0) {
+      const playheadX = (currentTime / effectiveMaxDuration) * width;
 
       // Draw playhead line across all tracks
       ctx.strokeStyle = '#ff4444';
@@ -310,16 +463,16 @@
     }
 
     // Draw time markers
-    if (maxDuration > 0) {
+    if (effectiveMaxDuration > 0) {
       ctx.fillStyle = '#666';
       ctx.font = '10px monospace';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
 
-      const markerInterval = maxDuration / 10;
+      const markerInterval = effectiveMaxDuration / 10;
       for (let i = 0; i <= 10; i++) {
         const time = i * markerInterval;
-        const x = (time / maxDuration) * width;
+        const x = (time / effectiveMaxDuration) * width;
         const timeStr = formatTime(time);
         ctx.fillText(timeStr, x + 2, 2);
       }
@@ -349,7 +502,17 @@
 
     // Get current time from first playing track, or first track with audio
     let playingTrack = tracks.find((track) => track && track.isPlaying);
+    let recordingTrack = tracks.find((track) => track && track.isRecording);
     let trackWithAudio = tracks.find((track) => track && track.audioBuffer);
+
+    // Debug logging
+    if (recordingTrack) {
+      console.log('Recording track found in updateTimeline:', {
+        isRecording: recordingTrack.isRecording,
+        recordingStartTime: recordingTrack.recordingStartTime,
+        currentTime: recordingTrack.audioContext.currentTime,
+      });
+    }
 
     if (playingTrack) {
       currentTime = playingTrack.getCurrentTime();
@@ -358,8 +521,39 @@
 
       // Continue animation loop
       animationFrameId = requestAnimationFrame(updateTimeline);
+    } else if (recordingTrack) {
+      // Advance timeline during recording
+      // Ensure recordingStartTime is set (should be set in startRecording)
+      if (
+        !recordingTrack.recordingStartTime ||
+        recordingTrack.recordingStartTime === 0
+      ) {
+        // Fallback: initialize if not set yet (shouldn't happen, but handle edge case)
+        recordingTrack.recordingStartTime =
+          recordingTrack.audioContext.currentTime;
+      }
+
+      const recordingDuration = Math.max(
+        0,
+        recordingTrack.audioContext.currentTime -
+          recordingTrack.recordingStartTime
+      );
+      currentTime = recordingDuration;
+
+      // Update maxDuration to accommodate recording if needed
+      // Add some padding (20%) to show future recording space
+      const requiredDuration = recordingDuration * 1.2;
+      if (requiredDuration > maxDuration) {
+        maxDuration = requiredDuration;
+      }
+
+      isPlaying = true; // Keep timeline moving
+      drawTimeline();
+
+      // Continue animation loop
+      animationFrameId = requestAnimationFrame(updateTimeline);
     } else {
-      // No track is playing, stop animation
+      // No track is playing or recording, stop animation
       isPlaying = false;
       animationFrameId = null;
 
@@ -435,15 +629,19 @@
 
   // Watch for playback state changes using the signature
   $: if (playingTracksSignature) {
-    const anyPlaying = tracks.some((track) => track && track.isPlaying);
+    const anyPlaying = tracks.some(
+      (track) => track && (track.isPlaying || track.isRecording)
+    );
+    const anyRecording = tracks.some((track) => track && track.isRecording);
     console.log('Playback state changed:', {
       anyPlaying,
+      anyRecording,
       animationFrameId,
       signature: playingTracksSignature,
     });
 
     if (anyPlaying && !animationFrameId) {
-      console.log('Starting timeline animation');
+      console.log('Starting timeline animation (playing or recording)');
       updateTimeline();
     } else if (!anyPlaying && animationFrameId) {
       console.log('Stopping timeline animation');
@@ -496,7 +694,9 @@
       }
 
       // Check if playback started but animation didn't
-      const anyPlaying = tracks.some((track) => track && track.isPlaying);
+      const anyPlaying = tracks.some(
+        (track) => track && (track.isPlaying || track.isRecording)
+      );
       if (anyPlaying && !animationFrameId) {
         console.log('Detected playback but no animation, starting...');
         updateTimeline();
@@ -514,6 +714,20 @@
     };
 
     window.addEventListener('resize', handleResize);
+
+    // Enumerate input devices
+    enumerateInputDevices();
+
+    // Listen for device changes
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener(
+        'devicechange',
+        enumerateInputDevices
+      );
+    }
+
+    // Start audio level monitoring (update more frequently for smoother visualization)
+    levelUpdateInterval = setInterval(updateAudioLevels, 30);
 
     return () => {
       clearInterval(checkInterval);
@@ -550,6 +764,15 @@
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
     }
+    if (levelUpdateInterval) {
+      clearInterval(levelUpdateInterval);
+    }
+    if (navigator.mediaDevices && navigator.mediaDevices.removeEventListener) {
+      navigator.mediaDevices.removeEventListener(
+        'devicechange',
+        enumerateInputDevices
+      );
+    }
   });
 </script>
 
@@ -564,53 +787,143 @@
             style="min-height: {Math.max(trackHeight, 80)}px;"
           >
             <div class="track-info-content">
-              {#if track && track.audioBuffer}
-                <div class="track-status-indicator loaded"></div>
-              {:else}
-                <div class="track-status-indicator empty"></div>
-              {/if}
-              <div class="track-number">T{index + 1}</div>
-              {#if track && track.audioBuffer}
-                <div class="track-filename" title={track.fileName || ''}>
-                  {track.fileName || 'Loaded'}
+              <div class="track-info-main">
+                <div class="track-header-row">
+                  {#if track && track.audioBuffer}
+                    <div class="track-status-indicator loaded"></div>
+                  {:else}
+                    <div class="track-status-indicator empty"></div>
+                  {/if}
+                  <div class="track-number">T{index + 1}</div>
                 </div>
-              {:else}
-                <label
-                  for="timeline-file-input-{index}"
-                  class="load-button-small"
-                >
-                  Load
-                </label>
-                <input
-                  id="timeline-file-input-{index}"
-                  type="file"
-                  accept="audio/*"
-                  on:change={(e) => handleFileSelect(e, track, index)}
-                  class="file-input"
-                />
-              {/if}
-              <div class="track-controls-row">
-                <button
-                  class="control-button mute-button"
-                  class:muted={track && track.isMuted === true}
-                  on:click={() => handleMuteClick(track, index)}
-                  title="Mute"
-                >
-                  M
-                </button>
-                <button
-                  class="control-button solo-button"
-                  class:soloed={track && track.isSoloed === true}
-                  on:click={() => handleSoloClick(track, index)}
-                  title="Solo"
-                >
-                  S
-                </button>
+                {#if track && track.audioBuffer}
+                  <div class="track-filename" title={track.fileName || ''}>
+                    {track.fileName || 'Loaded'}
+                  </div>
+                {:else}
+                  <label
+                    for="timeline-file-input-{index}"
+                    class="load-button-small"
+                  >
+                    Load
+                  </label>
+                  <input
+                    id="timeline-file-input-{index}"
+                    type="file"
+                    accept="audio/*"
+                    on:change={(e) => handleFileSelect(e, track, index)}
+                    class="file-input"
+                  />
+                {/if}
+                <div class="track-controls-row">
+                  <button
+                    class="control-button mute-button"
+                    class:muted={track && track.isMuted === true}
+                    on:click={() => handleMuteClick(track, index)}
+                    title="Mute"
+                  >
+                    M
+                  </button>
+                  <button
+                    class="control-button solo-button"
+                    class:soloed={track && track.isSoloed === true}
+                    on:click={() => handleSoloClick(track, index)}
+                    title="Solo"
+                  >
+                    S
+                  </button>
+                  {#if !track || !track.isRecording}
+                    <button
+                      class="control-button record-button"
+                      on:click={() => startRecording(track, index)}
+                      title="Start Recording"
+                    >
+                      ●
+                    </button>
+                  {:else}
+                    <button
+                      class="control-button stop-recording-button"
+                      on:click={() => stopRecording(track, index)}
+                      title="Stop Recording"
+                    >
+                      ■
+                    </button>
+                  {/if}
+                  <button
+                    class="control-button input-selector-button"
+                    on:click={() => toggleInputSelector(index)}
+                    title="Select Input Device"
+                  >
+                    i
+                  </button>
+                </div>
+                {#if track && (track.isRecording || track.mediaStream)}
+                  <div class="recording-status">
+                    {#if track.isRecording}
+                      <span class="recording-dot"></span>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+              <!-- Audio Level Meter -->
+              <div class="audio-level-meter">
+                <div
+                  class="audio-level-bar"
+                  style="height: {(audioLevels[index] !== undefined
+                    ? audioLevels[index]
+                    : 0) * 100}%"
+                  class:recording={track && track.isRecording}
+                ></div>
               </div>
             </div>
           </div>
         {/each}
       </div>
+
+      <!-- Input Selector Popup -->
+      {#each tracks as track, index}
+        {#if showInputSelectors[index]}
+          <div
+            class="popup-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="popup-title-{index}"
+          >
+            <button
+              class="popup-backdrop"
+              on:click={() => toggleInputSelector(index)}
+              aria-label="Close dialog"
+            ></button>
+            <div class="popup-content">
+              <div class="popup-header">
+                <h3 id="popup-title-{index}">Select Input Device</h3>
+                <button
+                  class="popup-close"
+                  on:click={() => toggleInputSelector(index)}
+                  title="Close"
+                  aria-label="Close dialog"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="popup-body">
+                <select
+                  bind:value={selectedInputDevices[index]}
+                  on:change={() => {
+                    toggleInputSelector(index);
+                  }}
+                  class="popup-select"
+                >
+                  <option value="default">Default Microphone</option>
+                  {#each inputDevices as device}
+                    <option value={device.deviceId}>{device.label}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+          </div>
+        {/if}
+      {/each}
       <div class="timeline-canvas-wrapper">
         <canvas bind:this={timelineCanvas} class="timeline-canvas"></canvas>
       </div>
@@ -670,11 +983,24 @@
 
   .track-info-content {
     display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 6px;
+    box-sizing: border-box;
+    position: relative;
+  }
+
+  .track-info-main {
+    display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
-    width: 100%;
-    justify-content: flex-start;
+    flex: 1;
+    min-width: 0;
+    position: relative;
   }
 
   .track-number {
@@ -685,14 +1011,18 @@
     text-transform: uppercase;
   }
 
+  .track-header-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+  }
+
   .track-status-indicator {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
-    position: absolute;
-    top: 6px;
-    right: 8px;
   }
 
   .track-status-indicator.loaded {
@@ -787,6 +1117,198 @@
 
   .control-button.solo-button.soloed:hover {
     background: #ffbb11 !important;
+  }
+
+  .control-button.record-button {
+    color: #e74c3c;
+    font-size: 10px;
+  }
+
+  .control-button.record-button:hover {
+    background: #e74c3c;
+    color: #fff;
+  }
+
+  .control-button.stop-recording-button {
+    background: #e74c3c !important;
+    color: #fff !important;
+    border-color: #e74c3c !important;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  .control-button.stop-recording-button:hover {
+    background: #c0392b !important;
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
+    }
+    50% {
+      opacity: 0.8;
+      box-shadow: 0 0 0 4px rgba(231, 76, 60, 0);
+    }
+  }
+
+  .control-button.input-selector-button {
+    font-size: 10px;
+    padding: 2px;
+    font-weight: 600;
+    font-style: italic;
+  }
+
+  .recording-status {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 8px;
+    color: #e74c3c;
+    margin-top: 4px;
+    font-family: 'Courier New', monospace;
+  }
+
+  .recording-dot {
+    width: 6px;
+    height: 6px;
+    background: #e74c3c;
+    border-radius: 50%;
+    animation: blink 1s ease-in-out infinite;
+  }
+
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+
+  .popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .popup-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .popup-content {
+    position: relative;
+    z-index: 1001;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    padding: 20px;
+    min-width: 300px;
+    max-width: 90%;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .popup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+
+  .popup-header h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .popup-close {
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+
+  .popup-close:hover {
+    background: #3a3a3a;
+    color: #fff;
+  }
+
+  .popup-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .popup-select {
+    width: 100%;
+    background: #1a1a1a;
+    border: 1px solid #3a3a3a;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .popup-select:hover {
+    border-color: #4a4a4a;
+  }
+
+  .popup-select:focus {
+    border-color: #4a9eff;
+  }
+
+  .audio-level-meter {
+    width: 4px;
+    height: 60px;
+    background: #1a1a1a;
+    border: 1px solid #2d2d2d;
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+    align-self: center;
+    flex-shrink: 0;
+  }
+
+  .audio-level-bar {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    background: linear-gradient(to top, #4caf50 0%, #ffd700 70%, #e74c3c 100%);
+    transition: height 0.05s linear;
+    min-height: 2px;
+  }
+
+  .audio-level-bar.recording {
+    background: linear-gradient(to top, #4caf50 0%, #ffd700 50%, #e74c3c 80%);
+    box-shadow: 0 0 4px rgba(231, 76, 60, 0.5);
   }
 
   .timeline-canvas-wrapper {

@@ -69,13 +69,25 @@
   }
 
   async function handleTimelineFileLoaded(event) {
-    const { track, trackIndex, fileName, file } = event.detail;
+    const { track, trackIndex, fileName, file, trackId } = event.detail;
+
+    // Handle file upload
     if (track && file) {
       const success = await track.loadAudioFile(file);
       if (success) {
         // Store filename on track for display
         track.fileName = fileName;
         handleFileLoaded({ detail: { trackId: track.id, fileName } });
+      }
+    }
+    // Handle recording completion (audioBuffer already loaded)
+    else if (trackId) {
+      // Find the track by ID
+      const track = tracks.find((t) => t && t.id === trackId);
+      if (track && track.audioBuffer) {
+        handleFileLoaded({
+          detail: { trackId: track.id, fileName: track.fileName },
+        });
       }
     }
   }
@@ -93,6 +105,16 @@
   // Reactive statement to check if any audio is loaded
   // This will update when loadedTracksCount changes
   $: hasAnyAudioLoaded = loadedTracksCount > 0;
+
+  // Also reactively update loadedTracksCount when tracks change
+  $: {
+    const count = tracks.filter(
+      (track) => track && track.audioBuffer !== null
+    ).length;
+    if (count !== loadedTracksCount) {
+      loadedTracksCount = count;
+    }
+  }
 
   // Sync global play state with individual track states
   $: {

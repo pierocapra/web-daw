@@ -18,6 +18,20 @@ export class Track {
     this.userVolume = 1.0; // User-set volume (0.0 to 1.0) - always preserved
     this.preMuteVolume = 1.0; // Store volume before mute (for solo/mute functionality)
 
+    // Recording state
+    this.isRecording = false;
+    this.mediaRecorder = null;
+    this.mediaStream = null;
+    this.recordedChunks = [];
+    this.recordingStartTime = 0;
+
+    // Audio level monitoring
+    this.analyserNode = null; // For input monitoring (recording)
+    this.playbackAnalyserNode = null; // For playback monitoring
+    this.audioLevel = 0; // 0.0 to 1.0
+    this.levelUpdateInterval = null;
+    this.isMonitoringLevels = false;
+
     // Create audio nodes
     this.gainNode = audioContext.createGain();
     this.volumeNode = audioContext.createGain();
@@ -41,12 +55,18 @@ export class Track {
     this.highFilter.frequency.value = 4000;
     this.highFilter.gain.value = 0;
 
-    // Connect nodes: source -> gain -> low -> mid -> high -> volume -> destination
+    // Create analyser node for playback monitoring
+    this.playbackAnalyserNode = audioContext.createAnalyser();
+    this.playbackAnalyserNode.fftSize = 256;
+    this.playbackAnalyserNode.smoothingTimeConstant = 0.8;
+
+    // Connect nodes: source -> gain -> low -> mid -> high -> volume -> analyser -> destination
     this.gainNode.connect(this.lowFilter);
     this.lowFilter.connect(this.midFilter);
     this.midFilter.connect(this.highFilter);
     this.highFilter.connect(this.volumeNode);
-    this.volumeNode.connect(destination);
+    this.volumeNode.connect(this.playbackAnalyserNode);
+    this.playbackAnalyserNode.connect(destination);
 
     // Initialize values
     this.setGain(1.0);
@@ -95,6 +115,9 @@ export class Track {
     this.source.start(0, this.offset);
 
     this.isPlaying = true;
+
+    // Start level monitoring for playback
+    this.startLevelMonitoring();
   }
 
   pause() {
@@ -295,7 +318,207 @@ export class Track {
     this.seek(newTime);
   }
 
+  async startRecording(deviceId = null) {
+    if (this.isRecording) {
+      console.warn('Already recording');
+      return false;
+    }
+
+    try {
+      // Request microphone/input access
+      const constraints = {
+        audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+      };
+
+      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // Create analyser node for audio level monitoring
+      this.analyserNode = this.audioContext.createAnalyser();
+      this.analyserNode.fftSize = 256;
+      this.analyserNode.smoothingTimeConstant = 0.8;
+
+      // Create MediaStreamAudioSourceNode from the media stream
+      const sourceNode = this.audioContext.createMediaStreamSource(
+        this.mediaStream
+      );
+      sourceNode.connect(this.analyserNode);
+
+      // Start monitoring audio levels (will monitor input)
+      this.startLevelMonitoring();
+
+      // Create MediaRecorder
+      const options = {
+        mimeType: 'audio/webm;codecs=opus',
+      };
+
+      // Fallback to default if webm not supported
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options.mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+          delete options.mimeType; // Use browser default
+        }
+      }
+
+      // Set recording start time BEFORE creating MediaRecorder to ensure it's available immediately
+      this.recordingStartTime = this.audioContext.currentTime;
+
+      this.mediaRecorder = new MediaRecorder(this.mediaStream, options);
+      this.recordedChunks = [];
+
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
+
+      this.mediaRecorder.onstop = async () => {
+        // Convert recorded chunks to AudioBuffer
+        const blob = new Blob(this.recordedChunks, {
+          type: this.mediaRecorder.mimeType,
+        });
+        const success = await this.loadRecordedAudio(blob);
+
+        // Stop all tracks in the media stream
+        if (this.mediaStream) {
+          this.mediaStream.getTracks().forEach((track) => track.stop());
+          this.mediaStream = null;
+        }
+        this.stopLevelMonitoring();
+        this.mediaRecorder = null;
+        this.recordedChunks = [];
+        this.isRecording = false;
+        this.recordingStartTime = 0;
+        this.audioLevel = 0;
+
+        if (!success) {
+          console.error('Failed to load recorded audio');
+        }
+      };
+
+      this.mediaRecorder.start();
+      this.isRecording = true;
+      return true;
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      this.isRecording = false;
+      return false;
+    }
+  }
+
+  stopRecording() {
+    if (!this.isRecording || !this.mediaRecorder) {
+      return false;
+    }
+
+    if (this.mediaRecorder.state === 'recording') {
+      this.mediaRecorder.stop();
+    }
+    this.isRecording = false;
+    return true;
+  }
+
+  async loadRecordedAudio(blob) {
+    try {
+      // Convert blob to array buffer
+      const arrayBuffer = await blob.arrayBuffer();
+
+      // Decode audio data
+      this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+      this.fileName = `Recording ${new Date().toLocaleTimeString()}`;
+      return true;
+    } catch (error) {
+      console.error('Error loading recorded audio:', error);
+      return false;
+    }
+  }
+
+  startLevelMonitoring() {
+    if (this.isMonitoringLevels) return;
+    this.isMonitoringLevels = true;
+
+    const updateLevel = () => {
+      let level = 0;
+      let hasData = false;
+
+      // Check input level (recording)
+      if (this.analyserNode) {
+        const inputDataArray = new Uint8Array(
+          this.analyserNode.frequencyBinCount
+        );
+        this.analyserNode.getByteFrequencyData(inputDataArray);
+        let sum = 0;
+        for (let i = 0; i < inputDataArray.length; i++) {
+          sum += inputDataArray[i];
+        }
+        const inputLevel = sum / inputDataArray.length / 255;
+        if (inputLevel > level) {
+          level = inputLevel;
+          hasData = true;
+        }
+      }
+
+      // Check playback level
+      if (this.playbackAnalyserNode && this.isPlaying) {
+        const playbackDataArray = new Uint8Array(
+          this.playbackAnalyserNode.frequencyBinCount
+        );
+        this.playbackAnalyserNode.getByteFrequencyData(playbackDataArray);
+        let sum = 0;
+        for (let i = 0; i < playbackDataArray.length; i++) {
+          sum += playbackDataArray[i];
+        }
+        const playbackLevel = sum / playbackDataArray.length / 255;
+        if (playbackLevel > level) {
+          level = playbackLevel;
+          hasData = true;
+        }
+      }
+
+      this.audioLevel = level;
+
+      // Continue monitoring if recording, playing, or has media stream
+      if (this.isRecording || this.mediaStream || this.isPlaying) {
+        requestAnimationFrame(updateLevel);
+      } else {
+        this.isMonitoringLevels = false;
+        // Gradually fade out the level
+        if (this.audioLevel > 0) {
+          this.audioLevel = Math.max(0, this.audioLevel - 0.05);
+          requestAnimationFrame(updateLevel);
+        }
+      }
+    };
+
+    updateLevel();
+  }
+
+  stopLevelMonitoring() {
+    this.isMonitoringLevels = false;
+    if (this.analyserNode) {
+      this.analyserNode = null;
+    }
+    // Don't disconnect playbackAnalyserNode as it's part of the audio chain
+  }
+
+  getAudioLevel() {
+    return this.audioLevel;
+  }
+
+  getRecordingState() {
+    return {
+      isRecording: this.isRecording,
+      duration: this.isRecording
+        ? this.audioContext.currentTime - this.recordingStartTime
+        : 0,
+    };
+  }
+
   cleanup() {
+    // Stop recording if active
+    if (this.isRecording) {
+      this.stopRecording();
+    }
+
     // Stop playback if playing
     if (this.isPlaying) {
       this.stop();
@@ -311,6 +534,13 @@ export class Track {
       this.source.disconnect();
       this.source = null;
     }
+
+    // Stop media stream if active
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach((track) => track.stop());
+      this.mediaStream = null;
+    }
+    this.stopLevelMonitoring();
 
     // Disconnect gain and volume nodes
     if (this.gainNode) {
