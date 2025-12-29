@@ -857,13 +857,6 @@
                     i
                   </button>
                 </div>
-                {#if track && (track.isRecording || track.mediaStream)}
-                  <div class="recording-status">
-                    {#if track.isRecording}
-                      <span class="recording-dot"></span>
-                    {/if}
-                  </div>
-                {/if}
               </div>
               <!-- Audio Level Meter -->
               <div class="audio-level-meter">
@@ -965,7 +958,7 @@
     border-bottom: 1px solid #2d2d2d;
     display: flex;
     align-items: flex-start;
-    padding: 6px 8px;
+    /* padding: 6px 8px; */
     background: #1f1f1f;
     transition: background 0.15s;
     min-height: 80px;
@@ -1133,22 +1126,30 @@
     background: #e74c3c !important;
     color: #fff !important;
     border-color: #e74c3c !important;
-    animation: pulse 1.5s ease-in-out infinite;
+    animation: pulse-recording 1s ease-in-out infinite;
+    box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.8);
+    font-weight: 700;
   }
 
   .control-button.stop-recording-button:hover {
     background: #c0392b !important;
   }
 
-  @keyframes pulse {
-    0%,
-    100% {
+  @keyframes pulse-recording {
+    0% {
       opacity: 1;
-      box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.8);
     }
     50% {
-      opacity: 0.8;
-      box-shadow: 0 0 0 4px rgba(231, 76, 60, 0);
+      opacity: 0.9;
+      transform: scale(1.15);
+      box-shadow: 0 0 0 10px rgba(231, 76, 60, 0.2);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.8);
     }
   }
 
@@ -1157,34 +1158,6 @@
     padding: 2px;
     font-weight: 600;
     font-style: italic;
-  }
-
-  .recording-status {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 8px;
-    color: #e74c3c;
-    margin-top: 4px;
-    font-family: 'Courier New', monospace;
-  }
-
-  .recording-dot {
-    width: 6px;
-    height: 6px;
-    background: #e74c3c;
-    border-radius: 50%;
-    animation: blink 1s ease-in-out infinite;
-  }
-
-  @keyframes blink {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.3;
-    }
   }
 
   .popup-overlay {
