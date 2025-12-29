@@ -241,6 +241,12 @@
   let levelUpdateInterval = null;
   let audioLevels = {}; // Track index -> audio level (0-1)
 
+  // Selection state for waveform editing
+  let selectionStart = null; // { trackIndex, time }
+  let selectionEnd = null; // { trackIndex, time }
+  let isSelecting = false;
+  let selectionTrackIndex = null;
+
   // Create a reactive signature of playing tracks to detect changes
   $: playingTracksSignature = tracks
     .map((track, i) =>
@@ -436,6 +442,45 @@
       waveformDataCount: waveformData.filter((w) => w && w.data).length,
     });
 
+    // Draw selection region
+    if (
+      selectionStart !== null &&
+      selectionEnd !== null &&
+      selectionTrackIndex !== null
+    ) {
+      const effectiveMaxDuration =
+        maxDuration > 0
+          ? maxDuration
+          : currentTime > 0
+            ? Math.max(currentTime, 10)
+            : 10;
+
+      if (effectiveMaxDuration > 0) {
+        const startX = (selectionStart.time / effectiveMaxDuration) * width;
+        const endX = (selectionEnd.time / effectiveMaxDuration) * width;
+        const selectionY = selectionTrackIndex * trackHeight;
+
+        // Draw selection rectangle
+        ctx.fillStyle = 'rgba(74, 158, 255, 0.3)';
+        ctx.fillRect(
+          Math.min(startX, endX),
+          selectionY,
+          Math.abs(endX - startX),
+          trackHeight
+        );
+
+        // Draw selection borders
+        ctx.strokeStyle = '#4a9eff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.min(startX, endX), selectionY);
+        ctx.lineTo(Math.min(startX, endX), selectionY + trackHeight);
+        ctx.moveTo(Math.max(startX, endX), selectionY);
+        ctx.lineTo(Math.max(startX, endX), selectionY + trackHeight);
+        ctx.stroke();
+      }
+    }
+
     // Draw playhead
     // Use a minimum duration if recording and maxDuration is 0
     const effectiveMaxDuration =
@@ -577,6 +622,202 @@
   // Expose forceUpdate function
   export { forceUpdate };
 
+  // Convert canvas X coordinate to time
+  function canvasXToTime(clientX) {
+    const effectiveMaxDuration =
+      maxDuration > 0
+        ? maxDuration
+        : currentTime > 0
+          ? Math.max(currentTime, 10)
+          : 10;
+    if (effectiveMaxDuration <= 0) return 0;
+
+    const canvas = timelineCanvas;
+    if (!canvas) return 0;
+    const rect = canvas.getBoundingClientRect();
+    const relativeX = clientX - rect.left;
+    const normalizedX = Math.max(0, Math.min(1, relativeX / rect.width));
+    return normalizedX * effectiveMaxDuration;
+  }
+
+  // Get track index from canvas Y coordinate
+  function canvasYToTrackIndex(clientY) {
+    const canvas = timelineCanvas;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const relativeY = clientY - rect.top;
+    const trackIdx = Math.floor(relativeY / trackHeight);
+    if (trackIdx >= 0 && trackIdx < tracks.length) {
+      return trackIdx;
+    }
+    return null;
+  }
+
+  // Handle mouse down for selection
+  function handleCanvasMouseDown(event) {
+    if (!timelineCanvas) return;
+
+    const trackIndex = canvasYToTrackIndex(event.clientY);
+    if (
+      trackIndex === null ||
+      !tracks[trackIndex] ||
+      !tracks[trackIndex].audioBuffer
+    ) {
+      // Clicked outside a valid track, clear selection
+      clearSelection();
+      return;
+    }
+
+    const time = canvasXToTime(event.clientX);
+    const duration = tracks[trackIndex].getDuration();
+    const clampedTime = Math.max(0, Math.min(time, duration));
+
+    isSelecting = true;
+    selectionTrackIndex = trackIndex;
+    selectionStart = { trackIndex, time: clampedTime };
+    selectionEnd = { trackIndex, time: clampedTime };
+
+    drawTimeline();
+  }
+
+  // Handle mouse move for selection
+  function handleCanvasMouseMove(event) {
+    if (!isSelecting || selectionTrackIndex === null || !timelineCanvas) return;
+
+    const track = tracks[selectionTrackIndex];
+    if (!track || !track.audioBuffer) {
+      isSelecting = false;
+      return;
+    }
+
+    const time = canvasXToTime(event.clientX);
+    const duration = track.getDuration();
+    const clampedTime = Math.max(0, Math.min(time, duration));
+
+    selectionEnd = { trackIndex: selectionTrackIndex, time: clampedTime };
+    drawTimeline();
+  }
+
+  // Handle mouse up to end selection
+  function handleCanvasMouseUp(event) {
+    if (!isSelecting) return;
+
+    isSelecting = false;
+
+    // Ensure selection is valid
+    if (selectionStart && selectionEnd && selectionTrackIndex !== null) {
+      // Swap if needed so start < end
+      if (selectionEnd.time < selectionStart.time) {
+        [selectionStart, selectionEnd] = [selectionEnd, selectionStart];
+      }
+    }
+
+    drawTimeline();
+  }
+
+  // Clear selection
+  function clearSelection() {
+    selectionStart = null;
+    selectionEnd = null;
+    selectionTrackIndex = null;
+    isSelecting = false;
+    drawTimeline();
+  }
+
+  // Trim selected region (keep only selection)
+  function trimSelection() {
+    if (!selectionStart || !selectionEnd || selectionTrackIndex === null)
+      return;
+
+    const track = tracks[selectionTrackIndex];
+    if (!track || !track.audioBuffer) return;
+
+    const startTime = Math.min(selectionStart.time, selectionEnd.time);
+    const endTime = Math.max(selectionStart.time, selectionEnd.time);
+
+    const success = track.trim(startTime, endTime);
+    if (success) {
+      clearSelection();
+      // Force waveform regeneration
+      updateWaveformsAndDraw();
+      dispatch('trackUpdated', { trackIndex: selectionTrackIndex });
+      updateCounter++;
+    } else {
+      alert('Failed to trim audio. Please try again.');
+    }
+  }
+
+  // Cut selected region (remove selection)
+  function cutSelection() {
+    if (!selectionStart || !selectionEnd || selectionTrackIndex === null)
+      return;
+
+    const track = tracks[selectionTrackIndex];
+    if (!track || !track.audioBuffer) return;
+
+    const startTime = Math.min(selectionStart.time, selectionEnd.time);
+    const endTime = Math.max(selectionStart.time, selectionEnd.time);
+
+    const success = track.cut(startTime, endTime);
+    if (success) {
+      clearSelection();
+      // Force waveform regeneration
+      updateWaveformsAndDraw();
+      dispatch('trackUpdated', { trackIndex: selectionTrackIndex });
+      updateCounter++;
+    } else {
+      alert('Failed to cut audio. Please try again.');
+    }
+  }
+
+  // Undo last operation on selected track
+  function undoOperation() {
+    if (selectionTrackIndex === null) {
+      // If no selection, try to undo on the first track with audio
+      const trackWithAudio = tracks.find((track) => track && track.audioBuffer);
+      if (trackWithAudio && trackWithAudio.canUndo) {
+        const success = trackWithAudio.undo();
+        if (success) {
+          const trackIndex = tracks.indexOf(trackWithAudio);
+          updateWaveformsAndDraw();
+          dispatch('trackUpdated', { trackIndex });
+          updateCounter++;
+        }
+      }
+      return;
+    }
+
+    const track = tracks[selectionTrackIndex];
+    if (!track || !track.audioBuffer) return;
+
+    if (track.canUndo && track.canUndo()) {
+      const success = track.undo();
+      if (success) {
+        clearSelection();
+        updateWaveformsAndDraw();
+        dispatch('trackUpdated', { trackIndex: selectionTrackIndex });
+        updateCounter++;
+      }
+    }
+  }
+
+  // Check if there's a valid selection
+  $: hasSelection =
+    selectionStart !== null &&
+    selectionEnd !== null &&
+    selectionTrackIndex !== null;
+
+  // Check if undo is available
+  $: canUndo =
+    selectionTrackIndex !== null &&
+    tracks[selectionTrackIndex] &&
+    tracks[selectionTrackIndex].canUndo
+      ? tracks[selectionTrackIndex].canUndo()
+      : tracks.some(
+          (track) =>
+            track && track.audioBuffer && track.canUndo && track.canUndo()
+        );
+
   // Create a string representation of tracks with audio to detect changes
   $: tracksAudioSignature = tracks
     .map((track, i) =>
@@ -713,7 +954,24 @@
       }
     };
 
+    const handleKeyDown = (event) => {
+      // Clear selection on Escape key
+      if (event.key === 'Escape' && hasSelection) {
+        clearSelection();
+      }
+      // Undo on Ctrl+Z (or Cmd+Z on Mac)
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key === 'z' &&
+        !event.shiftKey
+      ) {
+        event.preventDefault();
+        undoOperation();
+      }
+    };
+
     window.addEventListener('resize', handleResize);
+    window.addEventListener('keydown', handleKeyDown);
 
     // Enumerate input devices
     enumerateInputDevices();
@@ -732,6 +990,7 @@
     return () => {
       clearInterval(checkInterval);
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown);
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
@@ -918,7 +1177,49 @@
         {/if}
       {/each}
       <div class="timeline-canvas-wrapper">
-        <canvas bind:this={timelineCanvas} class="timeline-canvas"></canvas>
+        <canvas
+          bind:this={timelineCanvas}
+          class="timeline-canvas"
+          on:mousedown={handleCanvasMouseDown}
+          on:mousemove={handleCanvasMouseMove}
+          on:mouseup={handleCanvasMouseUp}
+          on:mouseleave={handleCanvasMouseUp}
+        ></canvas>
+        <div class="editing-controls">
+          {#if hasSelection}
+            <button
+              class="edit-button trim-button"
+              on:click={trimSelection}
+              title="Trim - Keep only selected region"
+            >
+              Trim
+            </button>
+            <button
+              class="edit-button cut-button"
+              on:click={cutSelection}
+              title="Cut - Remove selected region"
+            >
+              Cut
+            </button>
+            <button
+              class="edit-button clear-button"
+              on:click={clearSelection}
+              title="Clear selection"
+            >
+              ✕
+            </button>
+          {/if}
+          <div class="undo-controls">
+            <button
+              class="edit-button undo-button"
+              on:click={undoOperation}
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z / Cmd+Z)"
+            >
+              ↶ Undo
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   {:else}
@@ -1298,6 +1599,108 @@
     height: 100%;
     display: block;
     background: #0f0f0f;
+    cursor: crosshair;
+  }
+
+  .editing-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 100;
+  }
+
+  .undo-controls {
+    display: flex;
+    gap: 8px;
+    background: rgba(26, 26, 26, 0.9);
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #3a3a3a;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  }
+
+  .editing-controls > :global(.edit-button:not(.undo-button)) {
+    background: rgba(26, 26, 26, 0.9);
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #3a3a3a;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  }
+
+  .edit-button {
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .edit-button:hover:not(:disabled) {
+    background: #3a3a3a;
+    border-color: #4a4a4a;
+    transform: translateY(-1px);
+  }
+
+  .edit-button:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  .edit-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: #1a1a1a;
+    border-color: #2a2a2a;
+  }
+
+  .trim-button {
+    background: #4a9eff;
+    border-color: #4a9eff;
+  }
+
+  .trim-button:hover {
+    background: #5aaeff;
+    border-color: #5aaeff;
+  }
+
+  .cut-button {
+    background: #e74c3c;
+    border-color: #e74c3c;
+  }
+
+  .cut-button:hover {
+    background: #c0392b;
+    border-color: #c0392b;
+  }
+
+  .clear-button {
+    padding: 6px 8px;
+    font-size: 14px;
+    background: #555;
+    border-color: #666;
+  }
+
+  .clear-button:hover {
+    background: #666;
+    border-color: #777;
+  }
+
+  .undo-button {
+    background: #4a9eff;
+    border-color: #4a9eff;
+  }
+
+  .undo-button:hover:not(:disabled) {
+    background: #5aaeff;
+    border-color: #5aaeff;
   }
 
   .timeline-placeholder {

@@ -71,12 +71,19 @@ export class Track {
     // Initialize values
     this.setGain(1.0);
     this.setVolume(1.0); // This will also set userVolume
+
+    // Undo history
+    this.history = []; // Array of audio buffer snapshots
+    this.historyIndex = -1; // Current position in history (-1 means no history)
+    this.maxHistorySize = 20; // Maximum number of undo steps
   }
 
   async loadAudioFile(file) {
     try {
       const arrayBuffer = await file.arrayBuffer();
       this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+      // Clear history when loading new file
+      this.clearHistory();
       return true;
     } catch (error) {
       console.error('Error loading audio file:', error);
@@ -425,6 +432,8 @@ export class Track {
       // Decode audio data
       this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
       this.fileName = `Recording ${new Date().toLocaleTimeString()}`;
+      // Clear history when loading new recording
+      this.clearHistory();
       return true;
     } catch (error) {
       console.error('Error loading recorded audio:', error);
@@ -511,6 +520,313 @@ export class Track {
         ? this.audioContext.currentTime - this.recordingStartTime
         : 0,
     };
+  }
+
+  /**
+   * Save current audio buffer state to history
+   * @private
+   */
+  _saveToHistory() {
+    if (!this.audioBuffer) return;
+
+    try {
+      // Clone the audio buffer
+      const snapshot = this._cloneAudioBuffer(this.audioBuffer);
+      const offsetSnapshot = this.offset;
+
+      // Remove any history after current index (when undoing and then doing a new action)
+      if (this.historyIndex < this.history.length - 1) {
+        this.history = this.history.slice(0, this.historyIndex + 1);
+      }
+
+      // Add to history
+      this.history.push({
+        buffer: snapshot,
+        offset: offsetSnapshot,
+      });
+
+      // Update history index to point to the new state
+      this.historyIndex = this.history.length - 1;
+
+      // Limit history size (remove oldest entries if needed)
+      if (this.history.length > this.maxHistorySize) {
+        const removeCount = this.history.length - this.maxHistorySize;
+        this.history = this.history.slice(removeCount);
+        this.historyIndex = this.history.length - 1;
+      }
+    } catch (error) {
+      console.error('Error saving to history:', error);
+    }
+  }
+
+  /**
+   * Clone an audio buffer
+   * @private
+   * @param {AudioBuffer} sourceBuffer - Buffer to clone
+   * @returns {AudioBuffer} - Cloned buffer
+   */
+  _cloneAudioBuffer(sourceBuffer) {
+    const numberOfChannels = sourceBuffer.numberOfChannels;
+    const length = sourceBuffer.length;
+    const sampleRate = sourceBuffer.sampleRate;
+
+    const newBuffer = this.audioContext.createBuffer(
+      numberOfChannels,
+      length,
+      sampleRate
+    );
+
+    for (let channel = 0; channel < numberOfChannels; channel++) {
+      const sourceData = sourceBuffer.getChannelData(channel);
+      const newData = newBuffer.getChannelData(channel);
+      newData.set(sourceData);
+    }
+
+    return newBuffer;
+  }
+
+  /**
+   * Restore audio buffer from history
+   * @private
+   * @param {Object} historyEntry - History entry with buffer and offset
+   */
+  _restoreFromHistory(historyEntry) {
+    if (!historyEntry || !historyEntry.buffer) return false;
+
+    try {
+      // Stop playback if playing
+      if (this.isPlaying) {
+        this.pause();
+      }
+
+      // Restore buffer
+      this.audioBuffer = this._cloneAudioBuffer(historyEntry.buffer);
+      this.offset = historyEntry.offset || 0;
+
+      // Clamp offset to valid range
+      if (this.offset > this.audioBuffer.duration) {
+        this.offset = 0;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error restoring from history:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Undo last operation
+   * @returns {boolean} - Success status
+   */
+  undo() {
+    // historyIndex points to current state, so we need to go back one
+    if (this.historyIndex <= 0) {
+      return false;
+    }
+
+    // Decrement first to get the previous state
+    this.historyIndex--;
+    const historyEntry = this.history[this.historyIndex];
+    return this._restoreFromHistory(historyEntry);
+  }
+
+  /**
+   * Check if undo is available
+   * @returns {boolean}
+   */
+  canUndo() {
+    // historyIndex points to current state, so we need historyIndex > 0 to have a previous state
+    return this.historyIndex > 0;
+  }
+
+  /**
+   * Check if redo is available
+   * @returns {boolean}
+   */
+  /**
+   * Clear history (useful when loading new file)
+   */
+  clearHistory() {
+    this.history = [];
+    this.historyIndex = -1;
+  }
+
+  /**
+   * Trim audio buffer - keep only the selected region
+   * @param {number} startTime - Start time in seconds
+   * @param {number} endTime - End time in seconds
+   * @returns {boolean} - Success status
+   */
+  trim(startTime, endTime) {
+    if (!this.audioBuffer) return false;
+
+    const duration = this.audioBuffer.duration;
+    const start = Math.max(0, Math.min(startTime, duration));
+    const end = Math.max(start, Math.min(endTime, duration));
+
+    if (start >= end) return false;
+
+    try {
+      // Save to history before modifying
+      this._saveToHistory();
+
+      const sampleRate = this.audioBuffer.sampleRate;
+      const startSample = Math.floor(start * sampleRate);
+      const endSample = Math.floor(end * sampleRate);
+      const length = endSample - startSample;
+
+      if (length <= 0) {
+        // Restore from history if operation failed
+        this.undo();
+        return false;
+      }
+
+      // Stop playback if playing
+      const wasPlaying = this.isPlaying;
+      if (wasPlaying) {
+        this.pause();
+      }
+
+      // Create new buffer with trimmed audio
+      const numberOfChannels = this.audioBuffer.numberOfChannels;
+      const newBuffer = this.audioContext.createBuffer(
+        numberOfChannels,
+        length,
+        sampleRate
+      );
+
+      // Copy data from each channel
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        const oldData = this.audioBuffer.getChannelData(channel);
+        const newData = newBuffer.getChannelData(channel);
+        for (let i = 0; i < length; i++) {
+          newData[i] = oldData[startSample + i];
+        }
+      }
+
+      // Replace the audio buffer
+      this.audioBuffer = newBuffer;
+
+      // Reset offset if it's beyond the new duration
+      if (this.offset > newBuffer.duration) {
+        this.offset = 0;
+      } else if (this.offset > start) {
+        // Adjust offset relative to the trim start
+        this.offset = this.offset - start;
+      } else {
+        this.offset = 0;
+      }
+
+      // Save the new state to history (needed for undo to work)
+      this._saveToHistory();
+
+      return true;
+    } catch (error) {
+      console.error('Error trimming audio:', error);
+      // Try to restore from history if operation failed
+      if (this.canUndo()) {
+        this.undo();
+      }
+      return false;
+    }
+  }
+
+  /**
+   * Cut audio buffer - remove the selected region
+   * @param {number} startTime - Start time in seconds
+   * @param {number} endTime - End time in seconds
+   * @returns {boolean} - Success status
+   */
+  cut(startTime, endTime) {
+    if (!this.audioBuffer) return false;
+
+    const duration = this.audioBuffer.duration;
+    const start = Math.max(0, Math.min(startTime, duration));
+    const end = Math.max(start, Math.min(endTime, duration));
+
+    if (start >= end) return false;
+
+    try {
+      // Save to history before modifying
+      this._saveToHistory();
+
+      const sampleRate = this.audioBuffer.sampleRate;
+      const startSample = Math.floor(start * sampleRate);
+      const endSample = Math.floor(end * sampleRate);
+      const cutLength = endSample - startSample;
+
+      if (cutLength <= 0) {
+        // Restore from history if operation failed
+        this.undo();
+        return false;
+      }
+
+      // Stop playback if playing
+      const wasPlaying = this.isPlaying;
+      if (wasPlaying) {
+        this.pause();
+      }
+
+      // Create new buffer without the cut region
+      const numberOfChannels = this.audioBuffer.numberOfChannels;
+      const beforeLength = startSample;
+      const afterLength = this.audioBuffer.length - endSample;
+      const newLength = beforeLength + afterLength;
+
+      if (newLength <= 0) {
+        // Restore from history if operation failed
+        this.undo();
+        return false;
+      }
+
+      const newBuffer = this.audioContext.createBuffer(
+        numberOfChannels,
+        newLength,
+        sampleRate
+      );
+
+      // Copy data from each channel
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        const oldData = this.audioBuffer.getChannelData(channel);
+        const newData = newBuffer.getChannelData(channel);
+
+        // Copy before the cut
+        for (let i = 0; i < beforeLength; i++) {
+          newData[i] = oldData[i];
+        }
+
+        // Copy after the cut
+        for (let i = 0; i < afterLength; i++) {
+          newData[beforeLength + i] = oldData[endSample + i];
+        }
+      }
+
+      // Replace the audio buffer
+      this.audioBuffer = newBuffer;
+
+      // Adjust offset
+      if (this.offset > end) {
+        // Offset was after the cut, adjust it
+        this.offset = this.offset - (end - start);
+      } else if (this.offset > start) {
+        // Offset was in the cut region, move to start
+        this.offset = start;
+      }
+      // If offset was before start, keep it as is
+
+      // Save the new state to history (needed for undo to work)
+      this._saveToHistory();
+
+      return true;
+    } catch (error) {
+      console.error('Error cutting audio:', error);
+      // Try to restore from history if operation failed
+      if (this.canUndo()) {
+        this.undo();
+      }
+      return false;
+    }
   }
 
   cleanup() {
